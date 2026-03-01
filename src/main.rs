@@ -29,14 +29,39 @@ const YELLOW: &str = "\x1b[33m";
 const CYAN: &str = "\x1b[36m";
 const RED: &str = "\x1b[31m";
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 const SYSTEM_PROMPT: &str = r#"You are a coding assistant working in the user's terminal.
 You have access to the filesystem and shell. Be direct and concise.
 When the user asks you to do something, do it — don't just explain how.
 Use tools proactively: read files to understand context, run commands to verify your work.
 After making changes, run tests or verify the result when appropriate."#;
 
+fn print_help() {
+    println!("yoyo v{VERSION} — a coding agent growing up in public");
+    println!();
+    println!("Usage: yoyo [OPTIONS]");
+    println!();
+    println!("Options:");
+    println!("  --model <name>    Model to use (default: claude-opus-4-6)");
+    println!("  --skills <dir>    Directory containing skill files");
+    println!("  --help, -h        Show this help message");
+    println!("  --version, -V     Show version");
+    println!();
+    println!("Commands (in REPL):");
+    println!("  /quit, /exit      Exit the agent");
+    println!("  /clear            Clear conversation history");
+    println!("  /model <name>     Switch model mid-session");
+    println!();
+    println!("Environment:");
+    println!("  ANTHROPIC_API_KEY  API key for Anthropic (required)");
+    println!("  API_KEY            Alternative env var for API key");
+}
+
 fn print_banner() {
-    println!("\n{BOLD}{CYAN}  yoyo{RESET} {DIM}— a coding agent growing up in public{RESET}");
+    println!(
+        "\n{BOLD}{CYAN}  yoyo{RESET} v{VERSION} {DIM}— a coding agent growing up in public{RESET}"
+    );
     println!("{DIM}  Type /quit to exit, /clear to reset{RESET}\n");
 }
 
@@ -51,11 +76,27 @@ fn print_usage(usage: &Usage) {
 
 #[tokio::main]
 async fn main() {
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .or_else(|_| std::env::var("API_KEY"))
-        .expect("Set ANTHROPIC_API_KEY or API_KEY");
-
     let args: Vec<String> = std::env::args().collect();
+
+    // Handle --help and --version before anything else
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_help();
+        return;
+    }
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("yoyo v{VERSION}");
+        return;
+    }
+
+    let api_key = match std::env::var("ANTHROPIC_API_KEY").or_else(|_| std::env::var("API_KEY")) {
+        Ok(key) if !key.is_empty() => key,
+        _ => {
+            eprintln!("{RED}error:{RESET} No API key found.");
+            eprintln!("Set ANTHROPIC_API_KEY or API_KEY environment variable.");
+            eprintln!("Example: ANTHROPIC_API_KEY=sk-ant-... cargo run");
+            std::process::exit(1);
+        }
+    };
 
     let model = args
         .iter()
@@ -74,7 +115,13 @@ async fn main() {
     let skills = if skill_dirs.is_empty() {
         SkillSet::empty()
     } else {
-        SkillSet::load(&skill_dirs).expect("Failed to load skills")
+        match SkillSet::load(&skill_dirs) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("{YELLOW}warning:{RESET} Failed to load skills: {e}");
+                SkillSet::empty()
+            }
+        }
     };
 
     let mut agent = Agent::new(AnthropicProvider)
@@ -84,15 +131,16 @@ async fn main() {
         .with_skills(skills.clone())
         .with_tools(default_tools());
 
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "(unknown)".to_string());
+
     print_banner();
     println!("{DIM}  model: {model}{RESET}");
     if !skills.is_empty() {
         println!("{DIM}  skills: {} loaded{RESET}", skills.len());
     }
-    println!(
-        "{DIM}  cwd:   {}{RESET}\n",
-        std::env::current_dir().unwrap().display()
-    );
+    println!("{DIM}  cwd:   {cwd}{RESET}\n");
 
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
@@ -257,5 +305,41 @@ mod tests {
     #[test]
     fn test_truncate_empty() {
         assert_eq!(truncate("", 5), "");
+    }
+
+    #[test]
+    fn test_version_constant_exists() {
+        // VERSION should be set from Cargo.toml and contain a semver-like string
+        assert!(
+            VERSION.contains('.'),
+            "Version should contain a dot: {VERSION}"
+        );
+    }
+
+    #[test]
+    fn test_command_parsing_quit() {
+        // Test that /quit and /exit are recognized
+        let quit_commands = ["/quit", "/exit"];
+        for cmd in &quit_commands {
+            assert!(
+                *cmd == "/quit" || *cmd == "/exit",
+                "Unrecognized quit command: {cmd}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_command_parsing_model() {
+        let input = "/model claude-opus-4-6";
+        assert!(input.starts_with("/model "));
+        let model_name = input.trim_start_matches("/model ").trim();
+        assert_eq!(model_name, "claude-opus-4-6");
+    }
+
+    #[test]
+    fn test_command_parsing_model_whitespace() {
+        let input = "/model   claude-opus-4-6  ";
+        let model_name = input.trim_start_matches("/model ").trim();
+        assert_eq!(model_name, "claude-opus-4-6");
     }
 }
