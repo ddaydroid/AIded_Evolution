@@ -320,10 +320,12 @@ async fn run_prompt(agent: &mut Agent, input: &str, session_total: &mut Usage) {
                         io::stdout().flush().ok();
                     }
                     AgentEvent::AgentEnd { messages } => {
-                        for msg in messages.iter().rev() {
+                        // Sum usage across ALL assistant messages in this turn
+                        // (a single prompt can trigger multiple LLM calls via tool loops)
+                        for msg in &messages {
                             if let AgentMessage::Llm(Message::Assistant { usage, .. }) = msg {
-                                last_usage = usage.clone();
-                                break;
+                                last_usage.input += usage.input;
+                                last_usage.output += usage.output;
                             }
                         }
                     }
