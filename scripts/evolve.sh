@@ -66,10 +66,8 @@ if ! command -v timeout &>/dev/null; then
     fi
 fi
 
-${TIMEOUT_CMD:+$TIMEOUT_CMD "$TIMEOUT"} cargo run -- \
-    --model "$MODEL" \
-    --skills ./skills \
-    <<PROMPT || true
+PROMPT_FILE=$(mktemp)
+cat > "$PROMPT_FILE" <<PROMPT
 Today is Day $DAY ($DATE).
 
 Read these files in this order:
@@ -122,6 +120,13 @@ comment: [your 2-3 sentence response to the person]
 
 Now begin. Read IDENTITY.md first.
 PROMPT
+
+${TIMEOUT_CMD:+$TIMEOUT_CMD "$TIMEOUT"} cargo run -- \
+    --model "$MODEL" \
+    --skills ./skills \
+    < "$PROMPT_FILE" || true
+
+rm -f "$PROMPT_FILE"
 
 echo ""
 echo "→ Session complete. Checking results..."

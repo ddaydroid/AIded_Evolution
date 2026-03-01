@@ -1,19 +1,20 @@
 //! yoyo — a coding agent that evolves itself.
 //!
 //! Started as ~200 lines. Grows one commit at a time.
-//! Read IDENTITY.md, JOURNAL.md, and ROADMAP.md for the full story.
+//! Read IDENTITY.md and JOURNAL.md for the full story.
 //!
 //! Usage:
 //!   ANTHROPIC_API_KEY=sk-... cargo run
 //!   ANTHROPIC_API_KEY=sk-... cargo run -- --model claude-opus-4-6
 //!   ANTHROPIC_API_KEY=sk-... cargo run -- --skills ./skills
+//!   echo "prompt" | cargo run  (piped mode: single prompt, no REPL)
 //!
 //! Commands:
 //!   /quit, /exit    Exit the agent
 //!   /clear          Clear conversation history
 //!   /model <name>   Switch model mid-session
 
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Read, Write};
 use yoagent::agent::Agent;
 use yoagent::provider::AnthropicProvider;
 use yoagent::skills::SkillSet;
@@ -131,6 +132,22 @@ async fn main() {
         .with_skills(skills.clone())
         .with_tools(default_tools());
 
+    // Piped mode: read all of stdin as a single prompt, run once, exit
+    if !io::stdin().is_terminal() {
+        let mut input = String::new();
+        io::stdin().read_to_string(&mut input).ok();
+        let input = input.trim();
+        if input.is_empty() {
+            eprintln!("No input on stdin.");
+            std::process::exit(1);
+        }
+
+        eprintln!("{DIM}  yoyo (piped mode) — model: {model}{RESET}");
+        run_prompt(&mut agent, input).await;
+        return;
+    }
+
+    // Interactive REPL mode
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "(unknown)".to_string());
@@ -185,90 +202,94 @@ async fn main() {
             _ => {}
         }
 
-        let mut rx = agent.prompt(input).await;
-        let mut last_usage = Usage::default();
-        let mut in_text = false;
-
-        while let Some(event) = rx.recv().await {
-            match event {
-                AgentEvent::ToolExecutionStart {
-                    tool_name, args, ..
-                } => {
-                    if in_text {
-                        println!();
-                        in_text = false;
-                    }
-                    let summary = match tool_name.as_str() {
-                        "bash" => {
-                            let cmd = args
-                                .get("command")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("...");
-                            format!("$ {}", truncate(cmd, 80))
-                        }
-                        "read_file" => {
-                            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-                            format!("read {}", path)
-                        }
-                        "write_file" => {
-                            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-                            format!("write {}", path)
-                        }
-                        "edit_file" => {
-                            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-                            format!("edit {}", path)
-                        }
-                        "list_files" => {
-                            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-                            format!("ls {}", path)
-                        }
-                        "search" => {
-                            let pat = args.get("pattern").and_then(|v| v.as_str()).unwrap_or("?");
-                            format!("search '{}'", truncate(pat, 60))
-                        }
-                        _ => tool_name.clone(),
-                    };
-                    print!("{YELLOW}  ▶ {summary}{RESET}");
-                    io::stdout().flush().ok();
-                }
-                AgentEvent::ToolExecutionEnd { is_error, .. } => {
-                    if is_error {
-                        println!(" {RED}✗{RESET}");
-                    } else {
-                        println!(" {GREEN}✓{RESET}");
-                    }
-                }
-                AgentEvent::MessageUpdate {
-                    delta: StreamDelta::Text { delta },
-                    ..
-                } => {
-                    if !in_text {
-                        println!();
-                        in_text = true;
-                    }
-                    print!("{}", delta);
-                    io::stdout().flush().ok();
-                }
-                AgentEvent::AgentEnd { messages } => {
-                    for msg in messages.iter().rev() {
-                        if let AgentMessage::Llm(Message::Assistant { usage, .. }) = msg {
-                            last_usage = usage.clone();
-                            break;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if in_text {
-            println!();
-        }
-        print_usage(&last_usage);
-        println!();
+        run_prompt(&mut agent, input).await;
     }
 
     println!("\n{DIM}  bye 👋{RESET}\n");
+}
+
+async fn run_prompt(agent: &mut Agent, input: &str) {
+    let mut rx = agent.prompt(input).await;
+    let mut last_usage = Usage::default();
+    let mut in_text = false;
+
+    while let Some(event) = rx.recv().await {
+        match event {
+            AgentEvent::ToolExecutionStart {
+                tool_name, args, ..
+            } => {
+                if in_text {
+                    println!();
+                    in_text = false;
+                }
+                let summary = match tool_name.as_str() {
+                    "bash" => {
+                        let cmd = args
+                            .get("command")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("...");
+                        format!("$ {}", truncate(cmd, 80))
+                    }
+                    "read_file" => {
+                        let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                        format!("read {}", path)
+                    }
+                    "write_file" => {
+                        let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                        format!("write {}", path)
+                    }
+                    "edit_file" => {
+                        let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                        format!("edit {}", path)
+                    }
+                    "list_files" => {
+                        let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+                        format!("ls {}", path)
+                    }
+                    "search" => {
+                        let pat = args.get("pattern").and_then(|v| v.as_str()).unwrap_or("?");
+                        format!("search '{}'", truncate(pat, 60))
+                    }
+                    _ => tool_name.clone(),
+                };
+                print!("{YELLOW}  ▶ {summary}{RESET}");
+                io::stdout().flush().ok();
+            }
+            AgentEvent::ToolExecutionEnd { is_error, .. } => {
+                if is_error {
+                    println!(" {RED}✗{RESET}");
+                } else {
+                    println!(" {GREEN}✓{RESET}");
+                }
+            }
+            AgentEvent::MessageUpdate {
+                delta: StreamDelta::Text { delta },
+                ..
+            } => {
+                if !in_text {
+                    println!();
+                    in_text = true;
+                }
+                print!("{}", delta);
+                io::stdout().flush().ok();
+            }
+            AgentEvent::AgentEnd { messages } => {
+                for msg in messages.iter().rev() {
+                    if let AgentMessage::Llm(Message::Assistant { usage, .. }) = msg {
+                        last_usage = usage.clone();
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if in_text {
+        println!();
+    }
+    print_usage(&last_usage);
+    println!();
 }
 
 fn truncate(s: &str, max: usize) -> &str {
@@ -309,7 +330,6 @@ mod tests {
 
     #[test]
     fn test_version_constant_exists() {
-        // VERSION should be set from Cargo.toml and contain a semver-like string
         assert!(
             VERSION.contains('.'),
             "Version should contain a dot: {VERSION}"
@@ -318,7 +338,6 @@ mod tests {
 
     #[test]
     fn test_command_parsing_quit() {
-        // Test that /quit and /exit are recognized
         let quit_commands = ["/quit", "/exit"];
         for cmd in &quit_commands {
             assert!(
