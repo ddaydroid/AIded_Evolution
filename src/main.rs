@@ -66,11 +66,11 @@ fn print_banner() {
     println!("{DIM}  Type /quit to exit, /clear to reset{RESET}\n");
 }
 
-fn print_usage(usage: &Usage) {
+fn print_usage(usage: &Usage, total: &Usage) {
     if usage.input > 0 || usage.output > 0 {
         println!(
-            "\n{DIM}  tokens: {} in / {} out{RESET}",
-            usage.input, usage.output
+            "\n{DIM}  tokens: {} in / {} out  (session: {} in / {} out){RESET}",
+            usage.input, usage.output, total.input, total.output
         );
     }
 }
@@ -147,7 +147,8 @@ async fn main() {
         }
 
         eprintln!("{DIM}  yoyo (piped mode) — model: {model}{RESET}");
-        run_prompt(&mut agent, input).await;
+        let mut session_total = Usage::default();
+        run_prompt(&mut agent, input, &mut session_total).await;
         return;
     }
 
@@ -165,6 +166,7 @@ async fn main() {
 
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
+    let mut session_total = Usage::default();
 
     loop {
         print!("{BOLD}{GREEN}> {RESET}");
@@ -196,13 +198,13 @@ async fn main() {
             _ => {}
         }
 
-        run_prompt(&mut agent, input).await;
+        run_prompt(&mut agent, input, &mut session_total).await;
     }
 
     println!("\n{DIM}  bye 👋{RESET}\n");
 }
 
-async fn run_prompt(agent: &mut Agent, input: &str) {
+async fn run_prompt(agent: &mut Agent, input: &str, session_total: &mut Usage) {
     let mut rx = agent.prompt(input).await;
     let mut last_usage = Usage::default();
     let mut in_text = false;
@@ -282,7 +284,9 @@ async fn run_prompt(agent: &mut Agent, input: &str) {
     if in_text {
         println!();
     }
-    print_usage(&last_usage);
+    session_total.input += last_usage.input;
+    session_total.output += last_usage.output;
+    print_usage(&last_usage, session_total);
     println!();
 }
 
