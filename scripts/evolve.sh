@@ -105,11 +105,17 @@ For each improvement, follow the evolve skill rules:
 - After each successful change, commit: git add -A && git commit -m "Day $DAY: <short description>"
 - Then move on to the next improvement
 
-=== PHASE 5: Journal ===
+=== PHASE 5: Journal (MANDATORY — DO NOT SKIP) ===
 
-Write today's entry at the TOP of JOURNAL.md. Format:
+This is NOT optional. You MUST write a journal entry before the session ends.
+
+Write today's entry at the TOP of JOURNAL.md (above all existing entries). Format:
 ## Day $DAY — [title]
 [2-4 sentences: what you tried, what worked, what didn't, what's next]
+
+Then commit it: git add JOURNAL.md && git commit -m "Day $DAY: journal entry"
+
+If you skip the journal, you have failed the session — even if all code changes succeeded.
 
 === PHASE 6: Issue Response ===
 
@@ -137,6 +143,19 @@ if cargo build --quiet 2>/dev/null && cargo test --quiet 2>/dev/null; then
 else
     echo "  Build: FAIL — reverting source changes"
     git checkout -- src/
+fi
+
+# ── Step 5b: Verify journal was written ──
+if ! grep -q "## Day $DAY" JOURNAL.md 2>/dev/null; then
+    echo "  WARNING: No journal entry for Day $DAY — agent skipped the journal!"
+    # Write a minimal fallback entry
+    COMMITS=$(git log --oneline --grep="Day $DAY:" --format="%s" | sed "s/Day $DAY: //" | paste -sd ", " -)
+    if [ -z "$COMMITS" ]; then
+        COMMITS="no commits made"
+    fi
+    ENTRY="## Day $DAY — (auto-generated, agent skipped journal)\n\nSession commits: $COMMITS.\n"
+    sed -i.bak "s/^# Journal$/# Journal\n\n$ENTRY/" JOURNAL.md && rm -f JOURNAL.md.bak
+    echo "  Auto-generated fallback journal entry."
 fi
 
 # Increment day counter
