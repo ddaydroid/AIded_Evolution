@@ -30,7 +30,27 @@ cargo test --quiet
 echo "  Build OK."
 echo ""
 
-# ── Step 2: Fetch GitHub issues ──
+# ── Step 2: Check previous CI status ──
+CI_STATUS_MSG=""
+if command -v gh &>/dev/null; then
+    echo "→ Checking previous CI run..."
+    CI_CONCLUSION=$(gh run list --repo "$REPO" --workflow ci.yml --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unknown")
+    if [ "$CI_CONCLUSION" = "failure" ]; then
+        CI_RUN_ID=$(gh run list --repo "$REPO" --workflow ci.yml --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
+        CI_LOGS=""
+        if [ -n "$CI_RUN_ID" ]; then
+            CI_LOGS=$(gh run view "$CI_RUN_ID" --repo "$REPO" --log-failed 2>/dev/null | tail -30 || echo "Could not fetch logs.")
+        fi
+        CI_STATUS_MSG="Previous CI run FAILED. Error logs:
+$CI_LOGS"
+        echo "  CI: FAILED — agent will be told to fix this first."
+    else
+        echo "  CI: $CI_CONCLUSION"
+    fi
+    echo ""
+fi
+
+# ── Step 3: Fetch GitHub issues ──
 ISSUES_FILE="ISSUES_TODAY.md"
 echo "→ Fetching community issues..."
 if command -v gh &>/dev/null; then
@@ -49,10 +69,10 @@ else
 fi
 echo ""
 
-# ── Step 3: Prepare journal tail (last 10 entries for context) ──
+# ── Step 4: Prepare journal tail (last 10 entries for context) ──
 RECENT_JOURNAL=$(head -200 JOURNAL.md 2>/dev/null || echo "No journal yet.")
 
-# ── Step 4: Run evolution session ──
+# ── Step 5: Run evolution session ──
 echo "→ Starting evolution session..."
 echo ""
 
@@ -75,7 +95,11 @@ Read these files in this order:
 2. src/main.rs (your current source code — this is YOU)
 3. JOURNAL.md (your recent history — last 10 entries)
 4. ISSUES_TODAY.md (community requests)
-
+${CI_STATUS_MSG:+
+=== CI STATUS ===
+⚠️ PREVIOUS CI FAILED. Fix this FIRST before any new work.
+$CI_STATUS_MSG
+}
 === PHASE 1: Self-Assessment ===
 
 Read your own source code carefully. Then try a small task to test
@@ -90,6 +114,7 @@ Issues with more 👍 reactions should be prioritized higher.
 === PHASE 3: Decide ===
 
 Make as many improvements as you can this session. Prioritize:
+0. Fix CI failures (if any — this overrides everything else)
 1. Self-discovered crash or data loss bug
 2. Community issue with most 👍 (if actionable today)
 3. Self-discovered UX friction or missing error handling
@@ -137,15 +162,15 @@ rm -f "$PROMPT_FILE"
 echo ""
 echo "→ Session complete. Checking results..."
 
-# ── Step 5: Verify build and handle leftovers ──
-if cargo build --quiet 2>/dev/null && cargo test --quiet 2>/dev/null; then
+# ── Step 6: Verify build and handle leftovers ──
+if cargo build --quiet 2>/dev/null && cargo test --quiet 2>/dev/null && cargo clippy --quiet --all-targets 2>/dev/null && cargo fmt -- --check 2>/dev/null; then
     echo "  Build: PASS"
 else
     echo "  Build: FAIL — reverting source changes"
     git checkout -- src/
 fi
 
-# ── Step 5b: Verify journal was written ──
+# ── Step 6b: Verify journal was written ──
 if ! grep -q "## Day $DAY" JOURNAL.md 2>/dev/null; then
     echo "  WARNING: No journal entry for Day $DAY — agent skipped the journal!"
     # Write a minimal fallback entry
@@ -175,7 +200,7 @@ else
     echo "  No uncommitted changes remaining."
 fi
 
-# ── Step 6: Handle issue response ──
+# ── Step 7: Handle issue response ──
 if [ -f ISSUE_RESPONSE.md ]; then
     echo ""
     echo "→ Posting issue response..."
@@ -204,7 +229,7 @@ Commit: $(git rev-parse --short HEAD)" || true
     rm -f ISSUE_RESPONSE.md
 fi
 
-# ── Step 7: Push ──
+# ── Step 8: Push ──
 echo ""
 echo "→ Pushing..."
 git push || echo "  Push failed (maybe no remote or auth issue)"

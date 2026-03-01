@@ -701,8 +701,11 @@ mod tests {
         ];
         for cmd in &commands {
             assert!(
-                ["/help", "/quit", "/exit", "/clear", "/status", "/tokens", "/save", "/load", "/diff"]
-                    .contains(cmd),
+                [
+                    "/help", "/quit", "/exit", "/clear", "/status", "/tokens", "/save", "/load",
+                    "/diff"
+                ]
+                .contains(cmd),
                 "Command not recognized: {cmd}"
             );
         }
