@@ -35,6 +35,8 @@ const CYAN: &str = "\x1b[36m";
 const RED: &str = "\x1b[31m";
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const MAX_CONTEXT_TOKENS: u64 = 200_000;
+const AUTO_COMPACT_THRESHOLD: f64 = 0.80;
 
 const SYSTEM_PROMPT: &str = r#"You are a coding assistant working in the user's terminal.
 You have access to the filesystem and shell. Be direct and concise.
@@ -292,9 +294,7 @@ async fn main() {
                 continue;
             }
             "/tokens" => {
-                // Anthropic models all have 200k context windows.
-                // If we add non-Anthropic providers later, this will need updating.
-                let max_context: u64 = 200_000;
+                let max_context = MAX_CONTEXT_TOKENS;
 
                 // Estimate actual context window usage from message history
                 let messages = agent.messages().to_vec();
@@ -430,9 +430,33 @@ async fn main() {
         }
 
         run_prompt(&mut agent, input, &mut session_total).await;
+
+        // Auto-compact when context window is getting full
+        auto_compact_if_needed(&mut agent);
     }
 
     println!("\n{DIM}  bye 👋{RESET}\n");
+}
+
+/// Auto-compact conversation if context window usage exceeds threshold.
+fn auto_compact_if_needed(agent: &mut Agent) {
+    let messages = agent.messages().to_vec();
+    let used = total_tokens(&messages) as u64;
+    let ratio = used as f64 / MAX_CONTEXT_TOKENS as f64;
+
+    if ratio > AUTO_COMPACT_THRESHOLD {
+        let before_count = messages.len();
+        let config = ContextConfig::default();
+        let compacted = compact_messages(messages, &config);
+        let after = total_tokens(&compacted) as u64;
+        let after_count = compacted.len();
+        agent.replace_messages(compacted);
+        println!(
+            "{DIM}  ⚡ auto-compacted: {before_count} → {after_count} messages, ~{} → ~{} tokens{RESET}",
+            format_token_count(used),
+            format_token_count(after)
+        );
+    }
 }
 
 /// Format a token count for display (e.g., 1500 -> "1.5k").
@@ -972,6 +996,15 @@ mod tests {
         assert_eq!(parse_thinking_level("Medium"), ThinkingLevel::Medium);
         // Unknown defaults to medium with warning
         assert_eq!(parse_thinking_level("unknown"), ThinkingLevel::Medium);
+    }
+
+    #[test]
+    fn test_auto_compact_threshold_constants() {
+        // Verify the constants are sensible
+        assert_eq!(MAX_CONTEXT_TOKENS, 200_000);
+        assert!(AUTO_COMPACT_THRESHOLD > 0.5, "Threshold should be > 50%");
+        assert!(AUTO_COMPACT_THRESHOLD < 1.0, "Threshold should be < 100%");
+        assert!((AUTO_COMPACT_THRESHOLD - 0.80).abs() < f64::EPSILON);
     }
 
     #[test]
