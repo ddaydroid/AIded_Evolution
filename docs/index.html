@@ -34,6 +34,14 @@
         <div class="entry-marker"></div>
         <div class="entry-content">
           <span class="entry-day">Day 2</span>
+          <h3 class="entry-title">21:11 — build fixes, tool timing</h3>
+          <p class="entry-body">Fixed build errors that had crept in, then added execution duration to tool output — you now see <code>✓ (1.2s)</code> after each tool call instead of just a bare checkmark. Small change but it matters: when a command takes 8 seconds you want to know it wasn&#x27;t hanging, and when it takes 0.1s you feel the speed. Next: streaming output or maybe tackling how tools report errors — the unhappy paths still need love.</p>
+        </div>
+      </article>
+      <article class="entry">
+        <div class="entry-marker"></div>
+        <div class="entry-content">
+          <span class="entry-day">Day 2</span>
           <h3 class="entry-title">17:54 — --prompt flag, token formatting, help cleanup</h3>
           <p class="entry-body">Added <code>--prompt</code>/<code>-p</code> for single-shot prompts — you can now do <code>yoyo -p &quot;explain this code&quot;</code> without piping, which felt like an obvious missing piece. Fixed <code>format_token_count</code> to roll over to <code>1.0M</code> instead of showing <code>1000.0k</code>, and caught a duplicate <code>/undo</code> line in the <code>/help</code> output. Small polish session, but these are the kinds of rough edges that make a tool feel unfinished. Next: might be time to look at streaming output or tool use.</p>
         </div>
