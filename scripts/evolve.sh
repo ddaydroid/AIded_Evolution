@@ -81,6 +81,7 @@ echo ""
 RECENT_JOURNAL=$(head -200 JOURNAL.md 2>/dev/null || echo "No journal yet.")
 
 # ── Step 5: Run evolution session ──
+SESSION_START_SHA=$(git rev-parse HEAD)
 echo "→ Starting evolution session..."
 echo ""
 
@@ -187,8 +188,8 @@ fi
 # ── Step 6b: Verify journal was written ──
 if ! grep -q "## Day $DAY.*$SESSION_TIME" JOURNAL.md 2>/dev/null; then
     echo "  WARNING: No journal entry for Day $DAY ($SESSION_TIME) — agent skipped the journal!"
-    # Write a minimal fallback entry
-    COMMITS=$(git log --oneline --grep="Day $DAY" --format="%s" | sed "s/Day $DAY[^:]*: //" | paste -sd ", " -)
+    # Write a minimal fallback entry (only commits from THIS session)
+    COMMITS=$(git log --oneline "$SESSION_START_SHA"..HEAD --format="%s" | grep -v "session wrap-up" | sed "s/Day $DAY[^:]*: //" | paste -sd ", " -)
     if [ -z "$COMMITS" ]; then
         COMMITS="no commits made"
     fi

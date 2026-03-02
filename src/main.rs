@@ -19,7 +19,7 @@
 
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use yoagent::agent::Agent;
-use yoagent::context::{compact_messages, ContextConfig, total_tokens};
+use yoagent::context::{compact_messages, total_tokens, ContextConfig};
 use yoagent::provider::AnthropicProvider;
 use yoagent::skills::SkillSet;
 use yoagent::tools::default_tools;
@@ -294,7 +294,7 @@ async fn main() {
                 println!("  /save [path]       Save session to file (default: yoyo-session.json)");
                 println!("  /load [path]       Load session from file");
                 println!("  /diff              Show git diff summary of uncommitted changes");
-    println!("  /undo              Revert all uncommitted changes");
+                println!("  /undo              Revert all uncommitted changes");
                 println!("  /undo              Revert all uncommitted changes (git checkout)");
                 println!();
                 println!("  Multi-line input:");
@@ -323,10 +323,7 @@ async fn main() {
                 let bar = context_bar(context_used, max_context);
 
                 println!("{DIM}  Context window:");
-                println!(
-                    "    messages:    {}",
-                    messages.len()
-                );
+                println!("    messages:    {}", messages.len());
                 println!(
                     "    context:     {} / {} tokens",
                     format_token_count(context_used),
@@ -441,7 +438,9 @@ async fn main() {
                                 .output()
                             {
                                 Ok(o) if o.status.success() => {
-                                    println!("{GREEN}  ✓ reverted all uncommitted changes{RESET}\n");
+                                    println!(
+                                        "{GREEN}  ✓ reverted all uncommitted changes{RESET}\n"
+                                    );
                                 }
                                 _ => eprintln!("{RED}  error: failed to revert changes{RESET}\n"),
                             }
@@ -1077,10 +1076,7 @@ mod tests {
 
     #[test]
     fn test_auto_compact_threshold_constants() {
-        // Verify the constants are sensible
         assert_eq!(MAX_CONTEXT_TOKENS, 200_000);
-        assert!(AUTO_COMPACT_THRESHOLD > 0.5, "Threshold should be > 50%");
-        assert!(AUTO_COMPACT_THRESHOLD < 1.0, "Threshold should be < 100%");
         assert!((AUTO_COMPACT_THRESHOLD - 0.80).abs() < f64::EPSILON);
     }
 
