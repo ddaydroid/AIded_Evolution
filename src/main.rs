@@ -294,7 +294,6 @@ async fn main() {
                 println!("  /save [path]       Save session to file (default: yoyo-session.json)");
                 println!("  /load [path]       Load session from file");
                 println!("  /diff              Show git diff summary of uncommitted changes");
-                println!("  /undo              Revert all uncommitted changes");
                 println!("  /undo              Revert all uncommitted changes (git checkout)");
                 println!();
                 println!("  Multi-line input:");
