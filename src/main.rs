@@ -37,6 +37,7 @@ const RED: &str = "\x1b[31m";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_CONTEXT_TOKENS: u64 = 200_000;
 const AUTO_COMPACT_THRESHOLD: f64 = 0.80;
+const DEFAULT_SESSION_PATH: &str = "yoyo-session.json";
 
 const SYSTEM_PROMPT: &str = r#"You are a coding assistant working in the user's terminal.
 You have access to the filesystem and shell. Be direct and concise.
@@ -55,6 +56,7 @@ fn print_help() {
     println!("  --skills <dir>    Directory containing skill files");
     println!("  --system <text>   Custom system prompt (overrides default)");
     println!("  --system-file <f> Read system prompt from file");
+    println!("  --continue, -c    Resume last saved session");
     println!("  --help, -h        Show this help message");
     println!("  --version, -V     Show version");
     println!();
@@ -196,6 +198,23 @@ async fn main() {
         .unwrap_or(ThinkingLevel::Off);
 
     let mut agent = build_agent(&model, &api_key, &skills, &system_prompt, thinking);
+
+    // --continue / -c: resume last saved session
+    let continue_session = args.iter().any(|a| a == "--continue" || a == "-c");
+    if continue_session {
+        match std::fs::read_to_string(DEFAULT_SESSION_PATH) {
+            Ok(json) => match agent.restore_messages(&json) {
+                Ok(_) => {
+                    eprintln!(
+                        "{DIM}  resumed session: {} messages from {DEFAULT_SESSION_PATH}{RESET}",
+                        agent.messages().len()
+                    );
+                }
+                Err(e) => eprintln!("{YELLOW}warning:{RESET} Failed to restore session: {e}"),
+            },
+            Err(_) => eprintln!("{DIM}  no previous session found ({DEFAULT_SESSION_PATH}){RESET}"),
+        }
+    }
 
     // Piped mode: read all of stdin as a single prompt, run once, exit
     if !io::stdin().is_terminal() {
@@ -351,7 +370,7 @@ async fn main() {
             s if s.starts_with("/save") => {
                 let path = s.strip_prefix("/save").unwrap_or("").trim();
                 let path = if path.is_empty() {
-                    "yoyo-session.json"
+                    DEFAULT_SESSION_PATH
                 } else {
                     path
                 };
@@ -370,7 +389,7 @@ async fn main() {
             s if s.starts_with("/load") => {
                 let path = s.strip_prefix("/load").unwrap_or("").trim();
                 let path = if path.is_empty() {
-                    "yoyo-session.json"
+                    DEFAULT_SESSION_PATH
                 } else {
                     path
                 };
@@ -433,6 +452,18 @@ async fn main() {
 
         // Auto-compact when context window is getting full
         auto_compact_if_needed(&mut agent);
+    }
+
+    // Auto-save session on exit when --continue was used
+    if continue_session {
+        if let Ok(json) = agent.save_messages() {
+            if std::fs::write(DEFAULT_SESSION_PATH, &json).is_ok() {
+                eprintln!(
+                    "{DIM}  session saved to {DEFAULT_SESSION_PATH} ({} messages){RESET}",
+                    agent.messages().len()
+                );
+            }
+        }
     }
 
     println!("\n{DIM}  bye 👋{RESET}\n");
@@ -996,6 +1027,23 @@ mod tests {
         assert_eq!(parse_thinking_level("Medium"), ThinkingLevel::Medium);
         // Unknown defaults to medium with warning
         assert_eq!(parse_thinking_level("unknown"), ThinkingLevel::Medium);
+    }
+
+    #[test]
+    fn test_continue_flag_parsing() {
+        let args_short = ["yoyo".to_string(), "-c".to_string()];
+        assert!(args_short.iter().any(|a| a == "--continue" || a == "-c"));
+
+        let args_long = ["yoyo".to_string(), "--continue".to_string()];
+        assert!(args_long.iter().any(|a| a == "--continue" || a == "-c"));
+
+        let args_none = ["yoyo".to_string()];
+        assert!(!args_none.iter().any(|a| a == "--continue" || a == "-c"));
+    }
+
+    #[test]
+    fn test_default_session_path() {
+        assert_eq!(DEFAULT_SESSION_PATH, "yoyo-session.json");
     }
 
     #[test]
