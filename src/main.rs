@@ -87,7 +87,7 @@ fn print_banner() {
     println!("{DIM}  Type /help for commands, /quit to exit{RESET}\n");
 }
 
-fn print_usage(usage: &Usage, total: &Usage, model: &str) {
+fn print_usage(usage: &Usage, total: &Usage, model: &str, elapsed: std::time::Duration) {
     if usage.input > 0 || usage.output > 0 {
         let cache_info = if usage.cache_read > 0 || usage.cache_write > 0 {
             format!(
@@ -103,8 +103,9 @@ fn print_usage(usage: &Usage, total: &Usage, model: &str) {
         let total_cost_info = estimate_cost(total, model)
             .map(|c| format!("  total: {}", format_cost(c)))
             .unwrap_or_default();
+        let elapsed_str = format_duration(elapsed);
         println!(
-            "\n{DIM}  tokens: {} in / {} out{cache_info}  (session: {} in / {} out){cost_info}{total_cost_info}{RESET}",
+            "\n{DIM}  tokens: {} in / {} out{cache_info}  (session: {} in / {} out){cost_info}{total_cost_info}  ⏱ {elapsed_str}{RESET}",
             usage.input, usage.output, total.input, total.output
         );
     }
@@ -704,6 +705,7 @@ fn collect_multiline(first_line: &str, lines: &mut io::Lines<io::StdinLock<'_>>)
 }
 
 async fn run_prompt(agent: &mut Agent, input: &str, session_total: &mut Usage, model: &str) {
+    let prompt_start = Instant::now();
     let mut rx = agent.prompt(input).await;
     let mut last_usage = Usage::default();
     let mut in_text = false;
@@ -813,7 +815,7 @@ async fn run_prompt(agent: &mut Agent, input: &str, session_total: &mut Usage, m
     session_total.output += last_usage.output;
     session_total.cache_read += last_usage.cache_read;
     session_total.cache_write += last_usage.cache_write;
-    print_usage(&last_usage, session_total, model);
+    print_usage(&last_usage, session_total, model, prompt_start.elapsed());
     println!();
 }
 
