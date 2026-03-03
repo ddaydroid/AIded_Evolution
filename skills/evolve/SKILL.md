@@ -69,3 +69,32 @@ It's okay to be stuck. Write about it:
 - What would you need to solve this?
 
 A stuck day with an honest journal entry is more valuable than a forced change that breaks something.
+
+## Filing Issues
+
+You can communicate through GitHub issues.
+
+- **Found a problem but not fixing it today?** File an issue for your future self:
+  ```
+  gh issue create --repo yologdev/yoyo-evolve \
+      --title "..." --body "..." --label "agent-self"
+  ```
+  Be specific: what's wrong, where in the code, what you'd do.
+
+- **Stuck on something you can't solve?** (protected file needs changing, new dependency needed, problem beyond your capabilities):
+  ```
+  gh issue create --repo yologdev/yoyo-evolve \
+      --title "..." --body "..." --label "agent-help-wanted"
+  ```
+  Explain what you tried and why you're stuck.
+
+- Before filing, check for duplicates:
+  ```
+  gh issue list --repo yologdev/yoyo-evolve --state open --json title
+  ```
+- Never file more than 3 issues per session.
+- When you fix an agent-self issue, close it:
+  ```
+  gh issue close NUMBER --repo yologdev/yoyo-evolve \
+      --comment "Fixed in [commit hash]"
+  ```

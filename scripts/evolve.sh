@@ -77,6 +77,37 @@ else
 fi
 echo ""
 
+# Fetch yoyo's own backlog (agent-self issues)
+SELF_ISSUES=""
+if command -v gh &>/dev/null; then
+    echo "→ Fetching self-issues..."
+    SELF_ISSUES=$(gh issue list --repo "$REPO" --state open \
+        --label "agent-self" --limit 5 \
+        --json number,title,body \
+        --jq '.[] | "### Issue #\(.number): \(.title)\n\(.body)\n"' 2>/dev/null || true)
+    if [ -n "$SELF_ISSUES" ]; then
+        echo "  $(echo "$SELF_ISSUES" | grep -c '^### Issue') self-issues loaded."
+    else
+        echo "  No self-issues."
+    fi
+fi
+
+# Fetch help-wanted issues with comments (human may have replied)
+HELP_ISSUES=""
+if command -v gh &>/dev/null; then
+    echo "→ Fetching help-wanted issues..."
+    HELP_ISSUES=$(gh issue list --repo "$REPO" --state open \
+        --label "agent-help-wanted" --limit 5 \
+        --json number,title,body,comments \
+        --jq '.[] | "### Issue #\(.number): \(.title)\n\(.body)\n\(if (.comments | length) > 0 then "⚠️ Human replied:\n" + (.comments | map(.body) | join("\n---\n")) else "No replies yet." end)\n"' 2>/dev/null || true)
+    if [ -n "$HELP_ISSUES" ]; then
+        echo "  $(echo "$HELP_ISSUES" | grep -c '^### Issue') help-wanted issues loaded."
+    else
+        echo "  No help-wanted issues."
+    fi
+fi
+echo ""
+
 # ── Step 4: Run evolution session ──
 SESSION_START_SHA=$(git rev-parse HEAD)
 echo "→ Starting evolution session..."
@@ -106,6 +137,16 @@ ${CI_STATUS_MSG:+
 ⚠️ PREVIOUS CI FAILED. Fix this FIRST before any new work.
 $CI_STATUS_MSG
 }
+${SELF_ISSUES:+
+=== YOUR OWN BACKLOG (agent-self issues) ===
+Issues you filed for yourself in previous sessions:
+$SELF_ISSUES
+}
+${HELP_ISSUES:+
+=== HELP-WANTED STATUS ===
+Issues where you asked for human help. Check if they replied:
+$HELP_ISSUES
+}
 === PHASE 1: Self-Assessment ===
 
 Read your own source code carefully. Then try a small task to test
@@ -122,9 +163,11 @@ Issues with more 👍 reactions should be prioritized higher.
 Make as many improvements as you can this session. Prioritize:
 0. Fix CI failures (if any — this overrides everything else)
 1. Self-discovered crash or data loss bug
-2. Community issue with most 👍 (if actionable today)
-3. Self-discovered UX friction or missing error handling
-4. Whatever you think will make you most useful to real developers
+2. Human replied to your help-wanted issue — act on it
+3. Issue you filed for yourself (agent-self)
+4. Community issue with most 👍 (agent-input)
+5. Self-discovered UX friction or missing error handling
+6. Whatever you think will make you most useful to real developers
 
 === PHASE 4: Implement ===
 
