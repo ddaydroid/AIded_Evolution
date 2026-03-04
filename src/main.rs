@@ -11,6 +11,7 @@
 //!   ANTHROPIC_API_KEY=sk-... cargo run -- --system "You are a Rust expert."
 //!   ANTHROPIC_API_KEY=sk-... cargo run -- --system-file prompt.txt
 //!   ANTHROPIC_API_KEY=sk-... cargo run -- -p "explain this code"
+//!   ANTHROPIC_API_KEY=sk-... cargo run -- -p "write a README" -o README.md
 //!   echo "prompt" | cargo run  (piped mode: single prompt, no REPL)
 //!
 //! Commands:
@@ -61,6 +62,7 @@ fn print_help() {
     println!("  --system <text>   Custom system prompt (overrides default)");
     println!("  --system-file <f> Read system prompt from file");
     println!("  --prompt, -p <t>  Run a single prompt and exit (no REPL)");
+    println!("  --output, -o <f>  Write final response text to a file");
     println!("  --continue, -c    Resume last saved session");
     println!("  --help, -h        Show this help message");
     println!("  --version, -V     Show version");
@@ -228,6 +230,13 @@ async fn main() {
         }
     }
 
+    // --output / -o: write final response text to a file
+    let output_path = args
+        .iter()
+        .position(|a| a == "--output" || a == "-o")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+
     // --prompt / -p: single-shot mode with a prompt argument
     let prompt_arg = args
         .iter()
@@ -238,7 +247,8 @@ async fn main() {
     if let Some(prompt_text) = prompt_arg {
         eprintln!("{DIM}  yoyo (prompt mode) — model: {model}{RESET}");
         let mut session_total = Usage::default();
-        run_prompt(&mut agent, prompt_text.trim(), &mut session_total, &model).await;
+        let response = run_prompt(&mut agent, prompt_text.trim(), &mut session_total, &model).await;
+        write_output_file(&output_path, &response);
         return;
     }
 
@@ -254,7 +264,8 @@ async fn main() {
 
         eprintln!("{DIM}  yoyo (piped mode) — model: {model}{RESET}");
         let mut session_total = Usage::default();
-        run_prompt(&mut agent, input, &mut session_total, &model).await;
+        let response = run_prompt(&mut agent, input, &mut session_total, &model).await;
+        write_output_file(&output_path, &response);
         return;
     }
 
@@ -719,6 +730,16 @@ fn context_bar(used: u64, max: u64) -> String {
     format!("{bar} {:.0}%", pct * 100.0)
 }
 
+/// Write response text to a file if --output was specified.
+fn write_output_file(path: &Option<String>, text: &str) {
+    if let Some(path) = path {
+        match std::fs::write(path, text) {
+            Ok(_) => eprintln!("{DIM}  wrote response to {path}{RESET}"),
+            Err(e) => eprintln!("{RED}  error writing to {path}: {e}{RESET}"),
+        }
+    }
+}
+
 /// Get the current git branch name, if we're in a git repo.
 fn git_branch() -> Option<String> {
     std::process::Command::new("git")
@@ -804,12 +825,18 @@ fn collect_multiline(first_line: &str, lines: &mut io::Lines<io::StdinLock<'_>>)
     buf
 }
 
-async fn run_prompt(agent: &mut Agent, input: &str, session_total: &mut Usage, model: &str) {
+async fn run_prompt(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) -> String {
     let prompt_start = Instant::now();
     let mut rx = agent.prompt(input).await;
     let mut last_usage = Usage::default();
     let mut in_text = false;
     let mut tool_timers: HashMap<String, Instant> = HashMap::new();
+    let mut collected_text = String::new();
 
     loop {
         tokio::select! {
@@ -849,6 +876,7 @@ async fn run_prompt(agent: &mut Agent, input: &str, session_total: &mut Usage, m
                             println!();
                             in_text = true;
                         }
+                        collected_text.push_str(&delta);
                         print!("{}", delta);
                         io::stdout().flush().ok();
                     }
@@ -917,6 +945,7 @@ async fn run_prompt(agent: &mut Agent, input: &str, session_total: &mut Usage, m
     session_total.cache_write += last_usage.cache_write;
     print_usage(&last_usage, session_total, model, prompt_start.elapsed());
     println!();
+    collected_text
 }
 
 /// Summarize a message for /history display.
@@ -1356,6 +1385,60 @@ mod tests {
             .and_then(|i| args_none.get(i + 1))
             .cloned();
         assert_eq!(prompt_none, None);
+    }
+
+    #[test]
+    fn test_output_flag_parsing() {
+        let args = [
+            "yoyo".to_string(),
+            "-o".to_string(),
+            "output.md".to_string(),
+        ];
+        let output = args
+            .iter()
+            .position(|a| a == "--output" || a == "-o")
+            .and_then(|i| args.get(i + 1))
+            .cloned();
+        assert_eq!(output, Some("output.md".to_string()));
+
+        let args_long = [
+            "yoyo".to_string(),
+            "--output".to_string(),
+            "result.txt".to_string(),
+        ];
+        let output_long = args_long
+            .iter()
+            .position(|a| a == "--output" || a == "-o")
+            .and_then(|i| args_long.get(i + 1))
+            .cloned();
+        assert_eq!(output_long, Some("result.txt".to_string()));
+
+        let args_none = ["yoyo".to_string()];
+        let output_none = args_none
+            .iter()
+            .position(|a| a == "--output" || a == "-o")
+            .and_then(|i| args_none.get(i + 1))
+            .cloned();
+        assert_eq!(output_none, None);
+    }
+
+    #[test]
+    fn test_write_output_file_none() {
+        // When path is None, write_output_file should be a no-op
+        write_output_file(&None, "test content");
+        // No assertion needed — just verify it doesn't panic
+    }
+
+    #[test]
+    fn test_write_output_file_some() {
+        let dir = std::env::temp_dir().join("yoyo_test_output");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test_output.txt");
+        let path_str = path.to_string_lossy().to_string();
+        write_output_file(&Some(path_str), "hello from yoyo");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "hello from yoyo");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
