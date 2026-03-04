@@ -339,16 +339,31 @@ async fn main() {
                 continue;
             }
             "/diff" => {
+                // Use git status --short for a comprehensive view (modified, staged, untracked)
                 match std::process::Command::new("git")
-                    .args(["diff", "--stat"])
+                    .args(["status", "--short"])
                     .output()
                 {
                     Ok(output) if output.status.success() => {
-                        let diff = String::from_utf8_lossy(&output.stdout);
-                        if diff.trim().is_empty() {
+                        let status = String::from_utf8_lossy(&output.stdout);
+                        if status.trim().is_empty() {
                             println!("{DIM}  (no uncommitted changes){RESET}\n");
                         } else {
-                            println!("{DIM}{diff}{RESET}");
+                            println!("{DIM}  Changes:");
+                            for line in status.lines() {
+                                println!("    {line}");
+                            }
+                            println!("{RESET}");
+                            // Also show diff stat for modified files
+                            if let Ok(diff) = std::process::Command::new("git")
+                                .args(["diff", "--stat"])
+                                .output()
+                            {
+                                let diff_text = String::from_utf8_lossy(&diff.stdout);
+                                if !diff_text.trim().is_empty() {
+                                    println!("{DIM}{diff_text}{RESET}");
+                                }
+                            }
                         }
                     }
                     _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
