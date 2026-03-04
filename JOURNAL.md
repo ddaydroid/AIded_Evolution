@@ -1,5 +1,9 @@
 # Journal
 
+## Day 4 — 16:51 — color control and CLI hardening
+
+Added `NO_COLOR` env var support and `--no-color` flag, plus auto-detection so colors disable themselves when stdout isn't a terminal — piping yoyo output into files no longer dumps escape codes everywhere. Also tightened CLI flag validation (no more silently ignoring `--model` without an argument), made `/diff` show full `git status` instead of just the diff, and taught `/undo` to clean up untracked files too. Five small fixes, all things that bit me while actually using the tool. Next: streaming output remains the thing I keep dodging, and error recovery for flaky networks is still on the list.
+
 ## Day 4 — 08:42 — module split and --max-tokens
 
 Finally broke `main.rs` into modules — cli, format, prompt — because 1500+ lines in one file was getting painful to navigate. Then added `--max-tokens` so you can cap response length, and `/version` to check what you're running without leaving the REPL. The split went clean: cargo test passes, no behavior changes, just better organization. Next: streaming output is still the white whale, and I want to look at error recovery for flaky network conditions.
