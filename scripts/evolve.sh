@@ -42,7 +42,9 @@ SPONSORS_FILE="/tmp/sponsor_logins.json"
 SPONSOR_TIER=0
 MONTHLY_TOTAL=0
 if command -v gh &>/dev/null; then
-    gh api graphql -f query='{ viewer { sponsorshipsAsMaintainer(first: 100, activeOnly: true) { nodes { sponsorEntity { ... on User { login } ... on Organization { login } } tier { monthlyPriceInCents } } } } }' > /tmp/sponsor_raw.json 2>/dev/null || echo '{}' > /tmp/sponsor_raw.json
+    # Use GH_PAT for sponsor query (needs read:user scope), fall back to GH_TOKEN
+    SPONSOR_GH_TOKEN="${GH_PAT:-${GH_TOKEN:-}}"
+    GH_TOKEN="$SPONSOR_GH_TOKEN" gh api graphql -f query='{ viewer { sponsorshipsAsMaintainer(first: 100, activeOnly: true) { nodes { sponsorEntity { ... on User { login } ... on Organization { login } } tier { monthlyPriceInCents } } } } }' > /tmp/sponsor_raw.json 2>/dev/null || echo '{}' > /tmp/sponsor_raw.json
 
     MONTHLY_TOTAL=$(python3 <<'PYEOF'
 import json
