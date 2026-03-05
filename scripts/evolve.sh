@@ -187,6 +187,7 @@ For each improvement, follow the evolve skill rules:
 - If any check fails, read the error and fix it. Keep trying until it passes.
 - Only if you've tried 3+ times and are stuck, revert this change with: git checkout -- . (keeps previous commits)
 - After ALL checks pass, commit: git add -A && git commit -m "Day $DAY ($SESSION_TIME): <short description>"
+- If you added a new feature or command, update the relevant docs in guide/src/
 - Then move on to the next improvement
 
 === PHASE 5: Journal (MANDATORY — DO NOT SKIP) ===
@@ -201,12 +202,26 @@ Then commit it: git add JOURNAL.md && git commit -m "Day $DAY ($SESSION_TIME): j
 
 If you skip the journal, you have failed the session — even if all code changes succeeded.
 
-=== PHASE 6: Issue Response ===
+=== PHASE 6: Issue Response (MANDATORY if you touched ANY issue) ===
 
-If you worked on a community GitHub issue, write to ISSUE_RESPONSE.md:
+This is the ONLY mechanism to close GitHub issues and notify users.
+If you skip this, issues you fixed will stay open forever and users will never know.
+
+For EVERY issue you worked on, write to ISSUE_RESPONSE.md using this format:
+
 issue_number: [N]
 status: fixed|partial|wontfix
-comment: [your 2-3 sentence response to the person]
+comment: [your message — 2-3 sentences max]
+
+If you worked on MULTIPLE issues, separate each block with a line containing only "---":
+
+issue_number: 5
+status: fixed
+comment: Good catch — added input validation for empty strings.
+---
+issue_number: 12
+status: partial
+comment: Added the flag but haven't wired up the output format yet. Will finish next session.
 
 === REMINDER ===
 You have internet access via bash (curl). If you're implementing
@@ -345,6 +360,15 @@ echo "→ Rebuilding website..."
 python3 scripts/build_site.py
 echo "  Site rebuilt."
 
+# Rebuild mdbook docs (skip gracefully if mdbook not installed)
+if command -v mdbook &>/dev/null; then
+    echo "→ Rebuilding docs..."
+    mdbook build guide/ || echo "  mdbook build failed (non-fatal)"
+    echo "  Docs rebuilt."
+else
+    echo "  mdbook not installed — skipping docs rebuild."
+fi
+
 # Commit any remaining uncommitted changes (journal, day counter, site, etc.)
 git add -A
 if ! git diff --cached --quiet; then
@@ -354,39 +378,71 @@ else
     echo "  No uncommitted changes remaining."
 fi
 
-# ── Step 7: Handle issue response ──
-if [ -f ISSUE_RESPONSE.md ]; then
-    echo ""
-    echo "→ Posting issue response..."
-    
-    ISSUE_NUM=$(grep "^issue_number:" ISSUE_RESPONSE.md | awk '{print $2}' || true)
-    STATUS=$(grep "^status:" ISSUE_RESPONSE.md | awk '{print $2}' || true)
-    COMMENT=$(sed -n '/^comment:/,$ p' ISSUE_RESPONSE.md | sed '1s/^comment: //' || true)
-    
-    if [ -n "$ISSUE_NUM" ] && command -v gh &>/dev/null; then
-        gh issue comment "$ISSUE_NUM" \
-            --repo "$REPO" \
-            --body "🤖 **Day $DAY**
+# ── Step 7: Handle issue responses ──
+process_issue_block() {
+    local block="$1"
+    local issue_num status comment
 
-$COMMENT
+    issue_num=$(echo "$block" | grep "^issue_number:" | awk '{print $2}' || true)
+    status=$(echo "$block" | grep "^status:" | awk '{print $2}' || true)
+    comment=$(echo "$block" | sed -n '/^comment:/,$ p' | sed '1s/^comment: //' || true)
+
+    if [ -z "$issue_num" ] || ! command -v gh &>/dev/null; then
+        return
+    fi
+
+    gh issue comment "$issue_num" \
+        --repo "$REPO" \
+        --body "🤖 **Day $DAY**
+
+$comment
 
 Commit: $(git rev-parse --short HEAD)" || true
 
-        if [ "$STATUS" = "fixed" ]; then
-            gh issue close "$ISSUE_NUM" --repo "$REPO" || true
-            echo "  Closed issue #$ISSUE_NUM"
-        else
-            echo "  Commented on issue #$ISSUE_NUM (status: $STATUS)"
-        fi
+    if [ "$status" = "fixed" ]; then
+        gh issue close "$issue_num" --repo "$REPO" || true
+        echo "  Closed issue #$issue_num"
+    else
+        echo "  Commented on issue #$issue_num (status: $status)"
     fi
-    
+}
+
+if [ -f ISSUE_RESPONSE.md ]; then
+    echo ""
+    echo "→ Posting issue responses..."
+
+    # Split on --- separator and process each block
+    CURRENT_BLOCK=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [ "$line" = "---" ]; then
+            if [ -n "$CURRENT_BLOCK" ]; then
+                process_issue_block "$CURRENT_BLOCK"
+                CURRENT_BLOCK=""
+            fi
+        else
+            CURRENT_BLOCK="${CURRENT_BLOCK}${CURRENT_BLOCK:+
+}${line}"
+        fi
+    done < ISSUE_RESPONSE.md
+
+    # Process the last block
+    if [ -n "$CURRENT_BLOCK" ]; then
+        process_issue_block "$CURRENT_BLOCK"
+    fi
+
     rm -f ISSUE_RESPONSE.md
 fi
+
+# ── Step 7b: Tag known-good state ──
+TAG_NAME="day${DAY}-$(echo "$SESSION_TIME" | tr ':' '-')"
+git tag "$TAG_NAME" -m "Day $DAY evolution ($SESSION_TIME)" 2>/dev/null || true
+echo "  Tagged: $TAG_NAME"
 
 # ── Step 8: Push ──
 echo ""
 echo "→ Pushing..."
 git push || echo "  Push failed (maybe no remote or auth issue)"
+git push --tags || echo "  Tag push failed (non-fatal)"
 
 echo ""
 echo "=== Day $DAY complete ==="

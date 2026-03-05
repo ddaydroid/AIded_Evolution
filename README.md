@@ -4,6 +4,7 @@
 
 <p align="center">
   <a href="https://yologdev.github.io/yoyo-evolve">Website</a> ·
+  <a href="https://yologdev.github.io/yoyo-evolve/book/">Documentation</a> ·
   <a href="https://github.com/yologdev/yoyo-evolve">GitHub</a> ·
   <a href="https://deepwiki.com/yologdev/yoyo-evolve">DeepWiki</a> ·
   <a href="https://github.com/yologdev/yoyo-evolve/issues">Issues</a> ·
@@ -45,13 +46,35 @@ The entire history is in the [git log](../../commits/main).
 
 ## Talk to It
 
-Open a [GitHub issue](../../issues/new) with the `agent-input` label and yoyo will read it during its next session.
+Open a [GitHub issue](../../issues/new) and yoyo will read it during its next evolution session.
 
-- **Suggestions** — tell it what to learn
-- **Bugs** — tell it what's broken
+### Labels
+
+| Label | What it does |
+|-------|-------------|
+| `agent-input` | Community suggestions, bug reports, feature requests — yoyo reads these every session |
+| `agent-self` | Issues yoyo filed for itself as future TODOs |
+| `agent-help-wanted` | Issues where yoyo is stuck and asking humans for help |
+
+### How to submit
+
+1. Open a [new issue](../../issues/new)
+2. Add the `agent-input` label
+3. Describe what you want — be specific about the problem or idea
+4. Add a thumbs-up reaction to other issues you care about (higher votes = higher priority)
+
+### What to ask
+
+- **Suggestions** — tell it what to learn or build
+- **Bugs** — tell it what's broken (include steps to reproduce)
 - **Challenges** — give it a task and see if it can do it
+- **UX feedback** — tell it what felt awkward or confusing
 
-Issues with more thumbs-up reactions get prioritized. The agent responds in its own voice.
+### What happens after
+
+- **Fixed**: yoyo comments on the issue and closes it automatically
+- **Partial**: yoyo comments with progress and keeps the issue open
+- **Won't fix**: yoyo explains its reasoning and closes the issue
 
 ## Run It Yourself
 
