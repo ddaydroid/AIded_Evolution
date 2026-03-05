@@ -30,7 +30,7 @@ pub struct Config {
 }
 
 /// Project context file names, checked in order. All found files are concatenated.
-const PROJECT_CONTEXT_FILES: &[&str] = &["YOYO.md", ".yoyo/instructions.md"];
+pub const PROJECT_CONTEXT_FILES: &[&str] = &["YOYO.md", ".yoyo/instructions.md"];
 
 pub fn print_help() {
     println!("yoyo v{VERSION} — a coding agent growing up in public");
@@ -55,6 +55,8 @@ pub fn print_help() {
     println!("  /quit, /exit      Exit the agent");
     println!("  /clear            Clear conversation history");
     println!("  /compact          Compact conversation to save context space");
+    println!("  /config           Show all current settings");
+    println!("  /context          Show loaded project context files");
     println!("  /model <name>     Switch model mid-session");
     println!("  /status           Show session info");
     println!("  /tokens           Show token usage and context window");
@@ -128,6 +130,22 @@ pub fn load_project_context() -> Option<String> {
         }
         Some(context)
     }
+}
+
+/// List which project context files exist and their sizes.
+/// Returns a vec of (filename, line_count) for display by /context.
+pub fn list_project_context_files() -> Vec<(&'static str, usize)> {
+    let mut result = Vec::new();
+    for name in PROJECT_CONTEXT_FILES {
+        if let Ok(content) = std::fs::read_to_string(name) {
+            let content = content.trim();
+            if !content.is_empty() {
+                let lines = content.lines().count();
+                result.push((*name, lines));
+            }
+        }
+    }
+    result
 }
 
 /// Config file search paths, checked in order (first found wins).
@@ -632,5 +650,24 @@ thinking = "high"
         let content = "  model  =  claude-opus-4-6  ";
         let config = parse_config_file(content);
         assert_eq!(config.get("model").unwrap(), "claude-opus-4-6");
+    }
+
+    #[test]
+    fn test_list_project_context_files_returns_vec() {
+        // This test verifies the function runs without panicking.
+        // In CI the project may or may not have YOYO.md present.
+        let files = list_project_context_files();
+        for (name, lines) in &files {
+            assert!(!name.is_empty());
+            assert!(*lines > 0);
+        }
+    }
+
+    #[test]
+    fn test_project_context_file_names_not_empty() {
+        assert!(!PROJECT_CONTEXT_FILES.is_empty());
+        for name in PROJECT_CONTEXT_FILES {
+            assert!(!name.is_empty());
+        }
     }
 }

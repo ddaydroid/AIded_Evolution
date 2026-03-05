@@ -188,6 +188,7 @@ async fn main() {
                 println!("  /clear             Clear conversation history");
                 println!("  /compact           Compact conversation to save context space");
                 println!("  /config            Show all current settings");
+                println!("  /context           Show loaded project context files");
                 println!("  /model <name>      Switch model (clears conversation)");
                 println!("  /status            Show session info");
                 println!("  /tokens            Show token usage and context window");
@@ -513,6 +514,21 @@ async fn main() {
                 }
                 continue;
             }
+            "/context" => {
+                let files = cli::list_project_context_files();
+                if files.is_empty() {
+                    println!("{DIM}  No project context files found.");
+                    println!("  Searched for: {}", PROJECT_CONTEXT_FILES.join(", "));
+                    println!("  Create YOYO.md or .yoyo/instructions.md to add project context.{RESET}\n");
+                } else {
+                    println!("{DIM}  Project context files:");
+                    for (name, lines) in &files {
+                        println!("    {name} ({lines} lines)");
+                    }
+                    println!("{RESET}");
+                }
+                continue;
+            }
             "/retry" => {
                 match &last_input {
                     Some(prev) => {
@@ -652,7 +668,7 @@ fn collect_multiline(first_line: &str, lines: &mut io::Lines<io::StdinLock<'_>>)
 /// Known REPL command prefixes. Used to detect unknown slash commands.
 const KNOWN_COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/compact", "/status", "/tokens", "/save", "/load",
-    "/diff", "/undo", "/retry", "/history", "/model", "/config", "/version",
+    "/diff", "/undo", "/retry", "/history", "/model", "/config", "/context", "/version",
 ];
 
 /// Check if a slash-prefixed input is an unknown command.
@@ -695,8 +711,9 @@ mod tests {
     #[test]
     fn test_command_help_recognized() {
         let commands = [
-            "/help", "/quit", "/exit", "/clear", "/compact", "/config", "/status", "/tokens",
-            "/save", "/load", "/diff", "/undo", "/retry", "/history", "/model", "/version",
+            "/help", "/quit", "/exit", "/clear", "/compact", "/config", "/context", "/status",
+            "/tokens", "/save", "/load", "/diff", "/undo", "/retry", "/history", "/model",
+            "/version",
         ];
         for cmd in &commands {
             assert!(
