@@ -141,11 +141,11 @@ if command -v gh &>/dev/null; then
     gh issue list --repo "$REPO" \
         --state open \
         --label "agent-input" \
-        --limit 10 \
+        --limit 15 \
         --json number,title,body,labels,reactionGroups,author \
         > /tmp/issues_raw.json 2>/dev/null || true
 
-    python3 scripts/format_issues.py /tmp/issues_raw.json "$SPONSORS_FILE" > "$ISSUES_FILE" 2>/dev/null || echo "No issues found." > "$ISSUES_FILE"
+    python3 scripts/format_issues.py /tmp/issues_raw.json "$SPONSORS_FILE" "$DAY" > "$ISSUES_FILE" 2>/dev/null || echo "No issues found." > "$ISSUES_FILE"
     echo "  $(grep -c '^### Issue' "$ISSUES_FILE" 2>/dev/null || echo 0) issues loaded."
 else
     echo "  gh CLI not available. Skipping issue fetch."
@@ -248,15 +248,24 @@ Decide what to build based on YOUR assessment of what's useful, not what the iss
 
 === PHASE 3: Decide ===
 
-Make as many improvements as you can this session. Prioritize:
+You are autonomous. Issues are input, not orders. Your own evolution strategy is the primary driver.
+
+Think strategically: what capabilities does Claude Code have that you don't? What would
+close the biggest gap? Consider researching other coding agents (Claude Code, Cursor,
+Aider, Codex) for ideas. Your goal is to rival them — what's your next move toward that?
+
+Priority:
 0. Fix CI failures (if any — this overrides everything else)
-1. Self-discovered crash or data loss bug
-2. Human replied to your help-wanted issue — act on it
-3. Sponsor issues (marked with 💖 Sponsor) — these users fund development
-4. Issue you filed for yourself (agent-self)
-5. Community issue with highest net score (agent-input)
-6. Self-discovered UX friction or missing error handling
-7. Whatever you think will make you most useful to real developers
+1. Capability gaps — what can Claude Code do that you can't? Close the biggest gap.
+2. Self-discovered bugs, crashes, or data loss — keep yourself stable
+3. Self-discovered UX friction or missing capabilities — focus on what real human users experience
+4. Human replied to your help-wanted issue — act on their input
+5. Issue you filed for yourself (agent-self) — your own continuity matters
+6. Community issues (up to 3 max — sponsor 💖 first, then highest net score)
+7. Whatever you think will make you most competitive with real coding agents
+
+You MUST address at least 1 community issue per session. Even if you decide not to
+implement it, write an ISSUE_RESPONSE.md entry explaining why. Real people are waiting.
 
 === PHASE 4: Implement ===
 
@@ -510,6 +519,21 @@ comment: Worked on this issue. ${COMMIT_REF}"
                 echo "$RESP" > ISSUE_RESPONSE.md
             fi
         fi
+    fi
+fi
+
+# ── Step 6d: Ensure ISSUE_RESPONSE.md has valid entries ──
+# If the file exists but contains no issue_number: lines (agent wrote prose instead
+# of structured response), replace it with a partial entry for the top issue.
+if [ -f ISSUE_RESPONSE.md ] && ! grep -q "^issue_number:" ISSUE_RESPONSE.md 2>/dev/null; then
+    echo "  ISSUE_RESPONSE.md has no valid entries — writing acknowledgment for top issue."
+    TOP_ISSUE=$(grep -oP '### Issue #\K[0-9]+' "$ISSUES_FILE" 2>/dev/null | head -1)
+    if [ -n "$TOP_ISSUE" ]; then
+        cat > ISSUE_RESPONSE.md <<ACKEOF
+issue_number: ${TOP_ISSUE}
+status: partial
+comment: Acknowledged this issue but focused on other priorities this session. Will revisit.
+ACKEOF
     fi
 fi
 
