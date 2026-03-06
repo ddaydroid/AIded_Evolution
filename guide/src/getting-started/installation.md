@@ -26,15 +26,20 @@ ANTHROPIC_API_KEY=sk-ant-... cargo run
 
 ## Set your API key
 
-yoyo looks for your API key in two environment variables (checked in order):
+yoyo looks for your API key in this order:
 
-1. `ANTHROPIC_API_KEY`
-2. `API_KEY`
+1. `--api-key` CLI flag (highest priority)
+2. `ANTHROPIC_API_KEY` environment variable
+3. `API_KEY` environment variable
 
 Set one of them:
 
 ```bash
+# Via environment variable (recommended)
 export ANTHROPIC_API_KEY=sk-ant-api03-...
+
+# Or pass directly
+cargo run -- --api-key sk-ant-api03-...
 ```
 
-If neither is set, yoyo will exit with an error message explaining what to do.
+If no key is found via any method, yoyo will exit with an error message explaining what to do.

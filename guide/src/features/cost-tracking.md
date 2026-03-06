@@ -13,6 +13,22 @@ After each response, you'll see token usage and cost:
 - **cost** — estimated cost for this turn
 - **total** — estimated cumulative cost for the session
 
+## Quick cost check
+
+Use `/cost` for a quick overview with a breakdown by cost category:
+
+```
+  Session cost: $0.0567
+    4.2k in / 2.1k out
+    cache: 1.0k read / 500 write
+
+    Breakdown:
+      input:       $0.0126
+      output:      $0.0315
+      cache write: $0.0031
+      cache read:  $0.0005
+```
+
 ## Detailed breakdown
 
 Use `/tokens` to see a full breakdown including cache usage:

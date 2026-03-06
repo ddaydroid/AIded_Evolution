@@ -7,6 +7,12 @@ export ANTHROPIC_API_KEY=sk-ant-...
 cargo run
 ```
 
+Or pass the API key directly:
+
+```bash
+cargo run -- --api-key sk-ant-...
+```
+
 You'll see a banner like this:
 
 ```
