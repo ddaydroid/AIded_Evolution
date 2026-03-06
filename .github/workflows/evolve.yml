@@ -54,6 +54,7 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_PAT: ${{ secrets.GH_PAT }}
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || '' }}
         run: |
           chmod +x scripts/evolve.sh
           ./scripts/evolve.sh
@@ -67,6 +68,7 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_PAT: ${{ secrets.GH_PAT }}
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || '' }}
         run: |
           echo "Waiting 15 minutes before retry..."
           sleep 900
@@ -79,6 +81,7 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_PAT: ${{ secrets.GH_PAT }}
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || '' }}
         run: |
           echo "Waiting 45 minutes before retry..."
           sleep 2700
