@@ -143,6 +143,51 @@ pub fn clamp_temperature(t: f32) -> f32 {
     }
 }
 
+/// All known CLI flags (both boolean and value-taking).
+const KNOWN_FLAGS: &[&str] = &[
+    "--model",
+    "--thinking",
+    "--max-tokens",
+    "--temperature",
+    "--skills",
+    "--system",
+    "--system-file",
+    "--prompt",
+    "-p",
+    "--output",
+    "-o",
+    "--no-color",
+    "--verbose",
+    "-v",
+    "--continue",
+    "-c",
+    "--help",
+    "-h",
+    "--version",
+    "-V",
+];
+
+/// Warn about any unrecognized flags in the arguments.
+/// Skips args[0] (binary name) and values that follow flags expecting values.
+pub fn warn_unknown_flags(args: &[String], flags_needing_values: &[&str]) {
+    let mut skip_next = false;
+    for arg in args.iter().skip(1) {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if arg.starts_with('-') {
+            if flags_needing_values.contains(&arg.as_str()) {
+                skip_next = true; // skip the value that follows
+            } else if !KNOWN_FLAGS.contains(&arg.as_str()) {
+                eprintln!(
+                    "{YELLOW}warning:{RESET} Unknown flag '{arg}' — ignored. Run --help for usage."
+                );
+            }
+        }
+    }
+}
+
 /// Load project context from YOYO.md or .yoyo/instructions.md.
 /// Returns the combined content of all found files, or None if none exist.
 pub fn load_project_context() -> Option<String> {
@@ -303,6 +348,9 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
             }
         }
     }
+
+    // Warn about unknown flags
+    warn_unknown_flags(args, &flags_needing_values);
 
     let api_key = match std::env::var("ANTHROPIC_API_KEY").or_else(|_| std::env::var("API_KEY")) {
         Ok(key) if !key.is_empty() => key,
@@ -803,5 +851,48 @@ thinking = "high"
     fn test_clamp_temperature_above_one() {
         assert_eq!(clamp_temperature(1.5), 1.0);
         assert_eq!(clamp_temperature(99.0), 1.0);
+    }
+
+    #[test]
+    fn test_known_flags_contains_all_flags() {
+        // Every flag in the code should be in KNOWN_FLAGS
+        let flags_with_values = [
+            "--model",
+            "--thinking",
+            "--max-tokens",
+            "--temperature",
+            "--skills",
+            "--system",
+            "--system-file",
+            "--prompt",
+            "-p",
+            "--output",
+            "-o",
+        ];
+        for flag in &flags_with_values {
+            assert!(
+                KNOWN_FLAGS.contains(flag),
+                "Flag {flag} should be in KNOWN_FLAGS"
+            );
+        }
+    }
+
+    #[test]
+    fn test_warn_unknown_flags_no_panic() {
+        // Should not panic on various inputs
+        let flags_needing_values = ["--model", "--thinking"];
+        warn_unknown_flags(
+            &["yoyo".to_string(), "--unknown".to_string()],
+            &flags_needing_values,
+        );
+        warn_unknown_flags(
+            &[
+                "yoyo".to_string(),
+                "--model".to_string(),
+                "test".to_string(),
+            ],
+            &flags_needing_values,
+        );
+        warn_unknown_flags(&["yoyo".to_string()], &flags_needing_values);
     }
 }
