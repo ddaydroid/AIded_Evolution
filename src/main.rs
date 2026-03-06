@@ -36,6 +36,7 @@ use yoagent::provider::AnthropicProvider;
 use yoagent::tools::default_tools;
 use yoagent::*;
 
+#[allow(clippy::too_many_arguments)]
 fn build_agent(
     model: &str,
     api_key: &str,
