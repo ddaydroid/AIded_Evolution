@@ -4,9 +4,78 @@ use crate::cli::is_verbose;
 use crate::format::*;
 use std::collections::HashMap;
 use std::io::{self, Write};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use yoagent::agent::Agent;
 use yoagent::*;
+
+/// Maximum number of automatic retries for transient API errors.
+const MAX_RETRIES: u32 = 3;
+
+/// Calculate exponential backoff delay for a given retry attempt (1-indexed).
+/// Returns 1s, 2s, 4s for attempts 1, 2, 3.
+pub fn retry_delay(attempt: u32) -> Duration {
+    Duration::from_secs(1 << (attempt.saturating_sub(1)))
+}
+
+/// Classify whether an API error message looks transient (worth retrying).
+/// Retries: rate limits (429), server errors (5xx), network/connection issues, overloaded.
+/// Does NOT retry: auth errors (401/403), invalid requests (400), permission denied.
+pub fn is_retriable_error(error_msg: &str) -> bool {
+    let lower = error_msg.to_lowercase();
+
+    // Don't retry auth or client errors
+    let non_retriable = [
+        "401",
+        "403",
+        "400",
+        "authentication",
+        "unauthorized",
+        "forbidden",
+        "invalid api key",
+        "invalid request",
+        "permission denied",
+        "invalid_api_key",
+        "not_found",
+        "404",
+    ];
+    for keyword in &non_retriable {
+        if lower.contains(keyword) {
+            return false;
+        }
+    }
+
+    // Retry on transient errors
+    let retriable = [
+        "429",
+        "rate limit",
+        "rate_limit",
+        "too many requests",
+        "500",
+        "502",
+        "503",
+        "504",
+        "internal server error",
+        "bad gateway",
+        "service unavailable",
+        "gateway timeout",
+        "overloaded",
+        "connection",
+        "timeout",
+        "timed out",
+        "network",
+        "temporarily",
+        "retry",
+        "capacity",
+        "server error",
+    ];
+    for keyword in &retriable {
+        if lower.contains(keyword) {
+            return true;
+        }
+    }
+
+    false
+}
 
 /// Extract a preview of tool result content for display.
 /// Returns an empty string if there's nothing meaningful to show.
@@ -92,18 +161,26 @@ pub fn summarize_message(msg: &AgentMessage) -> (&str, String) {
     }
 }
 
-pub async fn run_prompt(
-    agent: &mut Agent,
-    input: &str,
-    session_total: &mut Usage,
-    model: &str,
-) -> String {
-    let prompt_start = Instant::now();
+/// Result of a single prompt attempt — either success or a retriable/fatal error.
+enum PromptResult {
+    /// Prompt completed (possibly with non-retriable errors already shown).
+    Done {
+        collected_text: String,
+        usage: Usage,
+    },
+    /// A retriable API error was detected — caller should retry.
+    RetriableError { error_msg: String, usage: Usage },
+}
+
+/// Execute a single prompt attempt and process all events.
+/// Returns whether we got a retriable error (so the caller can retry).
+async fn run_prompt_once(agent: &mut Agent, input: &str) -> PromptResult {
     let mut rx = agent.prompt(input).await;
-    let mut last_usage = Usage::default();
+    let mut usage = Usage::default();
     let mut in_text = false;
     let mut tool_timers: HashMap<String, Instant> = HashMap::new();
     let mut collected_text = String::new();
+    let mut retriable_error: Option<String> = None;
 
     loop {
         tokio::select! {
@@ -121,7 +198,6 @@ pub async fn run_prompt(
                         let summary = format_tool_summary(&tool_name, &args);
                         print!("{YELLOW}  ▶ {summary}{RESET}");
                         if is_verbose() {
-                            // Show full tool args in verbose mode
                             println!();
                             let args_str = serde_json::to_string_pretty(&args).unwrap_or_default();
                             for line in args_str.lines() {
@@ -139,14 +215,12 @@ pub async fn run_prompt(
                             .unwrap_or_default();
                         if is_error {
                             println!(" {RED}✗{RESET}{dur_str}");
-                            // Show error preview so user can see what went wrong
                             let preview = tool_result_preview(&result, 200);
                             if !preview.is_empty() {
                                 println!("{DIM}    {preview}{RESET}");
                             }
                         } else {
                             println!(" {GREEN}✓{RESET}{dur_str}");
-                            // In verbose mode, show a preview of successful results too
                             if is_verbose() {
                                 let preview = tool_result_preview(&result, 200);
                                 if !preview.is_empty() {
@@ -156,7 +230,6 @@ pub async fn run_prompt(
                         }
                     }
                     AgentEvent::ToolExecutionUpdate { partial_result, .. } => {
-                        // Stream partial results from tools (MCP servers, sub-agents)
                         let preview = tool_result_preview(&partial_result, 500);
                         if !preview.is_empty() {
                             print!("{DIM}{preview}{RESET}");
@@ -179,28 +252,29 @@ pub async fn run_prompt(
                         delta: StreamDelta::Thinking { delta },
                         ..
                     } => {
-                        // Show thinking output dimmed so user can follow the reasoning
                         print!("{DIM}{delta}{RESET}");
                         io::stdout().flush().ok();
                     }
                     AgentEvent::AgentEnd { messages } => {
-                        // Sum usage across ALL assistant messages in this turn
-                        // (a single prompt can trigger multiple LLM calls via tool loops)
                         for msg in &messages {
-                            if let AgentMessage::Llm(Message::Assistant { usage, stop_reason, error_message, .. }) = msg {
-                                last_usage.input += usage.input;
-                                last_usage.output += usage.output;
-                                last_usage.cache_read += usage.cache_read;
-                                last_usage.cache_write += usage.cache_write;
+                            if let AgentMessage::Llm(Message::Assistant { usage: msg_usage, stop_reason, error_message, .. }) = msg {
+                                usage.input += msg_usage.input;
+                                usage.output += msg_usage.output;
+                                usage.cache_read += msg_usage.cache_read;
+                                usage.cache_write += msg_usage.cache_write;
 
-                                // Show error stop reasons to the user
                                 if *stop_reason == StopReason::Error {
                                     if let Some(err_msg) = error_message {
                                         if in_text {
                                             println!();
                                             in_text = false;
                                         }
-                                        eprintln!("\n{RED}  error: {err_msg}{RESET}");
+                                        // Check if this error is worth retrying
+                                        if is_retriable_error(err_msg) {
+                                            retriable_error = Some(err_msg.clone());
+                                        } else {
+                                            eprintln!("\n{RED}  error: {err_msg}{RESET}");
+                                        }
                                     }
                                 }
                             }
@@ -220,13 +294,15 @@ pub async fn run_prompt(
                 }
             }
             _ = tokio::signal::ctrl_c() => {
-                // Cancel the agent's background work (tool execution, API calls)
                 agent.abort();
                 if in_text {
                     println!();
                 }
                 println!("\n{DIM}  (interrupted — press Ctrl+C again to exit){RESET}");
-                break;
+                return PromptResult::Done {
+                    collected_text,
+                    usage,
+                };
             }
         }
     }
@@ -234,11 +310,83 @@ pub async fn run_prompt(
     if in_text {
         println!();
     }
-    session_total.input += last_usage.input;
-    session_total.output += last_usage.output;
-    session_total.cache_read += last_usage.cache_read;
-    session_total.cache_write += last_usage.cache_write;
-    print_usage(&last_usage, session_total, model, prompt_start.elapsed());
+
+    if let Some(err_msg) = retriable_error {
+        PromptResult::RetriableError {
+            error_msg: err_msg,
+            usage,
+        }
+    } else {
+        PromptResult::Done {
+            collected_text,
+            usage,
+        }
+    }
+}
+
+pub async fn run_prompt(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) -> String {
+    let prompt_start = Instant::now();
+    let mut total_usage = Usage::default();
+    let mut collected_text = String::new();
+
+    // Save message state before the first attempt so we can restore on retry
+    let saved_state = agent.save_messages().ok();
+
+    for attempt in 0..=MAX_RETRIES {
+        // On retry, restore pre-prompt state so we don't duplicate the user message
+        if attempt > 0 {
+            if let Some(ref json) = saved_state {
+                let _ = agent.restore_messages(json);
+            }
+        }
+
+        match run_prompt_once(agent, input).await {
+            PromptResult::Done {
+                collected_text: text,
+                usage,
+                ..
+            } => {
+                total_usage.input += usage.input;
+                total_usage.output += usage.output;
+                total_usage.cache_read += usage.cache_read;
+                total_usage.cache_write += usage.cache_write;
+                collected_text = text;
+                break;
+            }
+            PromptResult::RetriableError { error_msg, usage } => {
+                total_usage.input += usage.input;
+                total_usage.output += usage.output;
+                total_usage.cache_read += usage.cache_read;
+                total_usage.cache_write += usage.cache_write;
+
+                if attempt < MAX_RETRIES {
+                    let delay = retry_delay(attempt + 1);
+                    let delay_secs = delay.as_secs();
+                    let next = attempt + 2; // human-readable attempt number
+                    eprintln!(
+                        "{DIM}  ⚡ retrying (attempt {next}/{}, waiting {delay_secs}s)...{RESET}",
+                        MAX_RETRIES + 1
+                    );
+                    tokio::time::sleep(delay).await;
+                } else {
+                    // Exhausted all retries — show the final error
+                    eprintln!("\n{RED}  error: {error_msg}{RESET}");
+                    eprintln!("{DIM}  (failed after {} attempts){RESET}", MAX_RETRIES + 1);
+                }
+            }
+        }
+    }
+
+    session_total.input += total_usage.input;
+    session_total.output += total_usage.output;
+    session_total.cache_read += total_usage.cache_read;
+    session_total.cache_write += total_usage.cache_write;
+    print_usage(&total_usage, session_total, model, prompt_start.elapsed());
     println!();
     collected_text
 }
@@ -246,6 +394,70 @@ pub async fn run_prompt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_retry_delay_exponential_backoff() {
+        // attempt 1 → 1s, attempt 2 → 2s, attempt 3 → 4s
+        assert_eq!(retry_delay(1), Duration::from_secs(1));
+        assert_eq!(retry_delay(2), Duration::from_secs(2));
+        assert_eq!(retry_delay(3), Duration::from_secs(4));
+    }
+
+    #[test]
+    fn test_retry_delay_zero_attempt() {
+        // Edge case: attempt 0 should still return 1s (saturating_sub prevents underflow)
+        assert_eq!(retry_delay(0), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn test_is_retriable_rate_limit() {
+        assert!(is_retriable_error("429 Too Many Requests"));
+        assert!(is_retriable_error("rate limit exceeded"));
+        assert!(is_retriable_error("Rate_limit_error: too many requests"));
+        assert!(is_retriable_error("too many requests, please slow down"));
+    }
+
+    #[test]
+    fn test_is_retriable_server_errors() {
+        assert!(is_retriable_error("500 Internal Server Error"));
+        assert!(is_retriable_error("502 Bad Gateway"));
+        assert!(is_retriable_error("503 Service Unavailable"));
+        assert!(is_retriable_error("504 Gateway Timeout"));
+        assert!(is_retriable_error("the server is overloaded"));
+        assert!(is_retriable_error("Server error occurred"));
+    }
+
+    #[test]
+    fn test_is_retriable_network_errors() {
+        assert!(is_retriable_error("connection reset by peer"));
+        assert!(is_retriable_error("network error: connection refused"));
+        assert!(is_retriable_error("request timed out"));
+        assert!(is_retriable_error("timeout waiting for response"));
+    }
+
+    #[test]
+    fn test_is_not_retriable_auth_errors() {
+        assert!(!is_retriable_error("401 Unauthorized"));
+        assert!(!is_retriable_error("403 Forbidden"));
+        assert!(!is_retriable_error("authentication failed"));
+        assert!(!is_retriable_error("invalid api key"));
+        assert!(!is_retriable_error("Invalid_api_key: check your key"));
+        assert!(!is_retriable_error("permission denied"));
+    }
+
+    #[test]
+    fn test_is_not_retriable_client_errors() {
+        assert!(!is_retriable_error("400 Bad Request"));
+        assert!(!is_retriable_error("invalid request body"));
+        assert!(!is_retriable_error("404 not_found"));
+    }
+
+    #[test]
+    fn test_is_not_retriable_unknown_error() {
+        // Unknown errors without retriable keywords should NOT be retried
+        assert!(!is_retriable_error("something went wrong"));
+        assert!(!is_retriable_error("unexpected error"));
+    }
 
     #[test]
     fn test_summarize_message_user() {

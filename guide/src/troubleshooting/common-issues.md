@@ -39,7 +39,9 @@ This appears when the Anthropic API returns an error. Common causes:
 - **Rate limiting** — you're sending too many requests; wait and retry
 - **Model unavailable** — the model you specified doesn't exist or you don't have access
 
-Use `/retry` to re-send the last prompt after the issue is resolved.
+**Automatic retry:** yoyo automatically retries transient errors (rate limits, server errors, network issues) with exponential backoff — up to 3 retries with 1s, 2s, 4s delays. You'll see a dim message like `⚡ retrying (attempt 2/4, waiting 2s)...` when this happens. Auth errors (401, 403) and invalid requests (400) are shown immediately without retrying.
+
+Use `/retry` to manually re-send the last prompt after a non-transient error is resolved.
 
 ## Context window full
 
