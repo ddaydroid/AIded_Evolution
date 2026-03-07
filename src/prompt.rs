@@ -108,6 +108,81 @@ pub fn write_output_file(path: &Option<String>, text: &str) {
     }
 }
 
+/// Extract all searchable text from a message (for /search).
+fn message_text(msg: &AgentMessage) -> String {
+    match msg {
+        AgentMessage::Llm(Message::User { content, .. }) => content
+            .iter()
+            .filter_map(|c| match c {
+                Content::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" "),
+        AgentMessage::Llm(Message::Assistant { content, .. }) => {
+            let mut parts = Vec::new();
+            for c in content {
+                match c {
+                    Content::Text { text } if !text.is_empty() => parts.push(text.as_str()),
+                    Content::ToolCall { name, .. } => parts.push(name.as_str()),
+                    _ => {}
+                }
+            }
+            parts.join(" ")
+        }
+        AgentMessage::Llm(Message::ToolResult {
+            tool_name, content, ..
+        }) => {
+            let text: String = content
+                .iter()
+                .filter_map(|c| match c {
+                    Content::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("{tool_name} {text}")
+        }
+        AgentMessage::Extension(ext) => ext.role.clone(),
+    }
+}
+
+/// Search messages for a query string (case-insensitive).
+/// Returns a vec of (index, role, context_preview) for matching messages.
+pub fn search_messages(messages: &[AgentMessage], query: &str) -> Vec<(usize, String, String)> {
+    let query_lower = query.to_lowercase();
+    let mut results = Vec::new();
+
+    for (i, msg) in messages.iter().enumerate() {
+        let text = message_text(msg);
+        if text.to_lowercase().contains(&query_lower) {
+            let (role, _) = summarize_message(msg);
+            // Find match context: show text around the first match
+            let lower = text.to_lowercase();
+            let match_pos = lower.find(&query_lower).unwrap_or(0);
+            let start = match_pos.saturating_sub(20);
+            // Get byte-safe boundaries
+            let start = text[..start]
+                .char_indices()
+                .last()
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+            let end = text
+                .char_indices()
+                .map(|(idx, ch)| idx + ch.len_utf8())
+                .find(|&idx| idx >= match_pos + query.len() + 20)
+                .unwrap_or(text.len());
+            let snippet = &text[start..end];
+            let prefix = if start > 0 { "…" } else { "" };
+            let suffix = if end < text.len() { "…" } else { "" };
+            let preview = format!("{prefix}{snippet}{suffix}");
+            results.push((i + 1, role.to_string(), preview));
+        }
+    }
+
+    results
+}
+
 /// Summarize a message for /history display.
 pub fn summarize_message(msg: &AgentMessage) -> (&str, String) {
     match msg {
@@ -560,5 +635,93 @@ mod tests {
             details: serde_json::json!(null),
         };
         assert_eq!(tool_result_preview(&result, 100), "first line");
+    }
+
+    #[test]
+    fn test_search_messages_basic_match() {
+        let messages = vec![
+            AgentMessage::Llm(Message::user("hello world")),
+            AgentMessage::Llm(Message::user("goodbye world")),
+        ];
+        let results = search_messages(&messages, "hello");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, 1); // 1-indexed
+        assert_eq!(results[0].1, "user");
+        assert!(results[0].2.contains("hello"));
+    }
+
+    #[test]
+    fn test_search_messages_case_insensitive() {
+        let messages = vec![AgentMessage::Llm(Message::user("Hello World"))];
+        let results = search_messages(&messages, "hello");
+        assert_eq!(results.len(), 1);
+        let results2 = search_messages(&messages, "HELLO");
+        assert_eq!(results2.len(), 1);
+    }
+
+    #[test]
+    fn test_search_messages_no_match() {
+        let messages = vec![AgentMessage::Llm(Message::user("hello world"))];
+        let results = search_messages(&messages, "foobar");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_messages_empty_messages() {
+        let messages: Vec<AgentMessage> = vec![];
+        let results = search_messages(&messages, "anything");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_messages_multiple_matches() {
+        let messages = vec![
+            AgentMessage::Llm(Message::user("the rust language")),
+            AgentMessage::Llm(Message::user("python is great")),
+            AgentMessage::Llm(Message::user("rust is fast")),
+        ];
+        let results = search_messages(&messages, "rust");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, 1);
+        assert_eq!(results[1].0, 3);
+    }
+
+    #[test]
+    fn test_search_messages_tool_result() {
+        let messages = vec![AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: "tc_1".into(),
+            tool_name: "bash".into(),
+            content: vec![Content::Text {
+                text: "cargo build succeeded".into(),
+            }],
+            is_error: false,
+            timestamp: 0,
+        })];
+        let results = search_messages(&messages, "cargo");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1, "tool");
+    }
+
+    #[test]
+    fn test_message_text_user() {
+        let msg = AgentMessage::Llm(Message::user("test input"));
+        let text = message_text(&msg);
+        assert_eq!(text, "test input");
+    }
+
+    #[test]
+    fn test_message_text_tool_result() {
+        let msg = AgentMessage::Llm(Message::ToolResult {
+            tool_call_id: "tc_1".into(),
+            tool_name: "bash".into(),
+            content: vec![Content::Text {
+                text: "output text".into(),
+            }],
+            is_error: false,
+            timestamp: 0,
+        });
+        let text = message_text(&msg);
+        assert!(text.contains("bash"));
+        assert!(text.contains("output text"));
     }
 }

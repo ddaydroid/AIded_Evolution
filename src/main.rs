@@ -19,6 +19,7 @@
 //!   /quit, /exit    Exit the agent
 //!   /clear          Clear conversation history
 //!   /model <name>   Switch model mid-session
+//!   /search <query> Search conversation history
 //!   /retry          Re-send the last user input
 
 mod cli;
@@ -323,6 +324,7 @@ async fn main() {
                 println!("  /run <cmd>         Run a shell command directly (no AI, no tokens)");
                 println!("  !<cmd>             Shortcut for /run");
                 println!("  /history           Show summary of conversation messages");
+                println!("  /search <query>    Search conversation history for matching messages");
                 println!("  /version           Show yoyo version");
                 println!();
                 println!("  Multi-line input:");
@@ -672,6 +674,41 @@ async fn main() {
                     for (i, msg) in messages.iter().enumerate() {
                         let (role, preview) = summarize_message(msg);
                         let idx = i + 1;
+                        println!("    {idx:>3}. [{role}] {preview}");
+                    }
+                    println!("{RESET}");
+                }
+                continue;
+            }
+            "/search" => {
+                println!("{DIM}  usage: /search <query>");
+                println!("  Search conversation history for messages containing <query>.{RESET}\n");
+                continue;
+            }
+            s if s.starts_with("/search ") => {
+                let query = s.trim_start_matches("/search ").trim();
+                if query.is_empty() {
+                    println!("{DIM}  usage: /search <query>{RESET}\n");
+                    continue;
+                }
+                let messages = agent.messages();
+                if messages.is_empty() {
+                    println!("{DIM}  (no messages to search){RESET}\n");
+                    continue;
+                }
+                let results = search_messages(messages, query);
+                if results.is_empty() {
+                    println!(
+                        "{DIM}  No matches for '{query}' in {len} messages.{RESET}\n",
+                        len = messages.len()
+                    );
+                } else {
+                    println!(
+                        "{DIM}  {count} match{es} for '{query}':",
+                        count = results.len(),
+                        es = if results.len() == 1 { "" } else { "es" }
+                    );
+                    for (idx, role, preview) in &results {
                         println!("    {idx:>3}. [{role}] {preview}");
                     }
                     println!("{RESET}");
@@ -1053,8 +1090,8 @@ fn run_health_check() -> Vec<(&'static str, bool, String)> {
 /// Known REPL command prefixes. Used to detect unknown slash commands.
 const KNOWN_COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/compact", "/cost", "/status", "/tokens", "/save",
-    "/load", "/diff", "/undo", "/health", "/retry", "/history", "/model", "/think", "/config",
-    "/context", "/init", "/version", "/run",
+    "/load", "/diff", "/undo", "/health", "/retry", "/history", "/search", "/model", "/think",
+    "/config", "/context", "/init", "/version", "/run",
 ];
 
 /// Check if a slash-prefixed input is an unknown command.
@@ -1099,7 +1136,7 @@ mod tests {
         let commands = [
             "/help", "/quit", "/exit", "/clear", "/compact", "/config", "/context", "/init",
             "/status", "/tokens", "/save", "/load", "/diff", "/undo", "/health", "/retry", "/run",
-            "/history", "/model", "/think", "/version",
+            "/history", "/search", "/model", "/think", "/version",
         ];
         for cmd in &commands {
             assert!(
