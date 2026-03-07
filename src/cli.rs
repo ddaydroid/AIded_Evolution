@@ -205,8 +205,40 @@ pub fn warn_unknown_flags(args: &[String], flags_needing_values: &[&str]) {
     }
 }
 
+/// Maximum number of files to include in the project file listing.
+pub const MAX_PROJECT_FILES: usize = 200;
+
+/// Get a listing of project files using `git ls-files`.
+/// Returns a newline-separated list of tracked files, capped at MAX_PROJECT_FILES.
+/// Returns None if git is not available or the directory is not a git repo.
+pub fn get_project_file_listing() -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["ls-files"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let files: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    if files.is_empty() {
+        return None;
+    }
+    let total = files.len();
+    let capped: Vec<&str> = files.into_iter().take(MAX_PROJECT_FILES).collect();
+    let mut listing = capped.join("\n");
+    if total > MAX_PROJECT_FILES {
+        listing.push_str(&format!(
+            "\n... and {} more files",
+            total - MAX_PROJECT_FILES
+        ));
+    }
+    Some(listing)
+}
+
 /// Load project context from YOYO.md or .yoyo/instructions.md.
 /// Returns the combined content of all found files, or None if none exist.
+/// Also appends a project file listing from `git ls-files` when available.
 pub fn load_project_context() -> Option<String> {
     let mut context = String::new();
     let mut found = Vec::new();
@@ -222,6 +254,21 @@ pub fn load_project_context() -> Option<String> {
             }
         }
     }
+
+    // Append project file listing if available
+    if let Some(file_listing) = get_project_file_listing() {
+        if !context.is_empty() {
+            context.push_str("\n\n");
+        }
+        context.push_str("## Project Files\n\n");
+        context.push_str(&file_listing);
+        if found.is_empty() {
+            // Even without context files, file listing alone is useful
+            eprintln!("{DIM}  context: project file listing{RESET}");
+            return Some(context);
+        }
+    }
+
     if found.is_empty() {
         None
     } else {
@@ -1001,5 +1048,47 @@ thinking = "high"
         let content = "api_key = \"sk-ant-test-from-config\"";
         let config = parse_config_file(content);
         assert_eq!(config.get("api_key").unwrap(), "sk-ant-test-from-config");
+    }
+
+    #[test]
+    fn test_get_project_file_listing_no_panic() {
+        // Should not panic regardless of whether we're in a git repo or not.
+        // In CI this runs inside a git repo, so we expect Some with files.
+        let result = get_project_file_listing();
+        // If we're in a git repo (likely in CI), verify the output is reasonable
+        if let Some(listing) = &result {
+            assert!(!listing.is_empty(), "File listing should not be empty");
+            let lines: Vec<&str> = listing.lines().collect();
+            assert!(
+                lines.len() <= MAX_PROJECT_FILES + 1, // +1 for possible "... and N more" line
+                "File listing should be capped at {} files",
+                MAX_PROJECT_FILES
+            );
+            // Should contain at least Cargo.toml (we're in a Rust project)
+            assert!(
+                listing.contains("Cargo.toml"),
+                "File listing should contain Cargo.toml"
+            );
+        }
+    }
+
+    #[test]
+    fn test_max_project_files_constant() {
+        assert_eq!(MAX_PROJECT_FILES, 200);
+    }
+
+    #[test]
+    fn test_load_project_context_includes_file_listing() {
+        // load_project_context should include project file listing when in a git repo
+        let result = load_project_context();
+        if let Some(context) = &result {
+            // If we're in a git repo, context should include the file listing section
+            if get_project_file_listing().is_some() {
+                assert!(
+                    context.contains("## Project Files"),
+                    "Context should contain Project Files section"
+                );
+            }
+        }
     }
 }
