@@ -44,7 +44,9 @@ use rustyline::Editor;
 use std::io::{self, IsTerminal, Read, Write};
 use yoagent::agent::Agent;
 use yoagent::context::{compact_messages, total_tokens, ContextConfig, ExecutionLimits};
-use yoagent::provider::AnthropicProvider;
+use yoagent::provider::{
+    AnthropicProvider, GoogleProvider, ModelConfig, OpenAiCompat, OpenAiCompatProvider,
+};
 use yoagent::tools::bash::BashTool;
 use yoagent::tools::edit::EditFileTool;
 use yoagent::tools::file::{ReadFileTool, WriteFileTool};
@@ -195,10 +197,95 @@ fn build_tools(auto_approve: bool) -> Vec<Box<dyn AgentTool>> {
     ]
 }
 
+/// Create a ModelConfig for non-Anthropic providers.
+fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) -> ModelConfig {
+    match provider {
+        "openai" => {
+            let mut config = ModelConfig::openai(model, model);
+            if let Some(url) = base_url {
+                config.base_url = url.to_string();
+            }
+            config
+        }
+        "google" => {
+            let mut config = ModelConfig::google(model, model);
+            if let Some(url) = base_url {
+                config.base_url = url.to_string();
+            }
+            config
+        }
+        "ollama" => {
+            let url = base_url.unwrap_or("http://localhost:11434/v1");
+            ModelConfig::local(url, model)
+        }
+        "openrouter" => {
+            let mut config = ModelConfig::openai(model, model);
+            config.provider = "openrouter".into();
+            config.base_url = base_url
+                .unwrap_or("https://openrouter.ai/api/v1")
+                .to_string();
+            config.compat = Some(OpenAiCompat::openrouter());
+            config
+        }
+        "xai" => {
+            let mut config = ModelConfig::openai(model, model);
+            config.provider = "xai".into();
+            config.base_url = base_url.unwrap_or("https://api.x.ai/v1").to_string();
+            config.compat = Some(OpenAiCompat::xai());
+            config
+        }
+        "groq" => {
+            let mut config = ModelConfig::openai(model, model);
+            config.provider = "groq".into();
+            config.base_url = base_url
+                .unwrap_or("https://api.groq.com/openai/v1")
+                .to_string();
+            config.compat = Some(OpenAiCompat::groq());
+            config
+        }
+        "deepseek" => {
+            let mut config = ModelConfig::openai(model, model);
+            config.provider = "deepseek".into();
+            config.base_url = base_url
+                .unwrap_or("https://api.deepseek.com/v1")
+                .to_string();
+            config.compat = Some(OpenAiCompat::deepseek());
+            config
+        }
+        "mistral" => {
+            let mut config = ModelConfig::openai(model, model);
+            config.provider = "mistral".into();
+            config.base_url = base_url.unwrap_or("https://api.mistral.ai/v1").to_string();
+            config.compat = Some(OpenAiCompat::mistral());
+            config
+        }
+        "cerebras" => {
+            let mut config = ModelConfig::openai(model, model);
+            config.provider = "cerebras".into();
+            config.base_url = base_url.unwrap_or("https://api.cerebras.ai/v1").to_string();
+            config.compat = Some(OpenAiCompat::cerebras());
+            config
+        }
+        "custom" => {
+            let url = base_url.unwrap_or("http://localhost:8080/v1");
+            ModelConfig::local(url, model)
+        }
+        _ => {
+            // Unknown provider — treat as OpenAI-compatible with custom base URL
+            let url = base_url.unwrap_or("http://localhost:8080/v1");
+            let mut config = ModelConfig::local(url, model);
+            config.provider = provider.to_string();
+            config
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_agent(
     model: &str,
     api_key: &str,
+    provider: &str,
+    base_url: Option<&str>,
     skills: &yoagent::skills::SkillSet,
     system_prompt: &str,
     thinking: ThinkingLevel,
@@ -207,13 +294,39 @@ fn build_agent(
     max_turns: Option<usize>,
     auto_approve: bool,
 ) -> Agent {
-    let mut agent = Agent::new(AnthropicProvider)
-        .with_system_prompt(system_prompt)
-        .with_model(model)
-        .with_api_key(api_key)
-        .with_thinking(thinking)
-        .with_skills(skills.clone())
-        .with_tools(build_tools(auto_approve));
+    let mut agent = if provider == "anthropic" && base_url.is_none() {
+        // Default Anthropic path — unchanged
+        Agent::new(AnthropicProvider)
+            .with_system_prompt(system_prompt)
+            .with_model(model)
+            .with_api_key(api_key)
+            .with_thinking(thinking)
+            .with_skills(skills.clone())
+            .with_tools(build_tools(auto_approve))
+    } else if provider == "google" {
+        // Google uses its own provider
+        let config = create_model_config(provider, model, base_url);
+        Agent::new(GoogleProvider)
+            .with_system_prompt(system_prompt)
+            .with_model(model)
+            .with_api_key(api_key)
+            .with_thinking(thinking)
+            .with_skills(skills.clone())
+            .with_tools(build_tools(auto_approve))
+            .with_model_config(config)
+    } else {
+        // All other providers use OpenAI-compatible API
+        let config = create_model_config(provider, model, base_url);
+        Agent::new(OpenAiCompatProvider)
+            .with_system_prompt(system_prompt)
+            .with_model(model)
+            .with_api_key(api_key)
+            .with_thinking(thinking)
+            .with_skills(skills.clone())
+            .with_tools(build_tools(auto_approve))
+            .with_model_config(config)
+    };
+
     if let Some(max) = max_tokens {
         agent = agent.with_max_tokens(max);
     }
@@ -248,6 +361,8 @@ async fn main() {
 
     let mut model = config.model;
     let api_key = config.api_key;
+    let provider = config.provider;
+    let base_url = config.base_url;
     let skills = config.skills;
     let system_prompt = config.system_prompt;
     let mut thinking = config.thinking;
@@ -264,6 +379,8 @@ async fn main() {
     let mut agent = build_agent(
         &model,
         &api_key,
+        &provider,
+        base_url.as_deref(),
         &skills,
         &system_prompt,
         thinking,
@@ -300,6 +417,8 @@ async fn main() {
                 agent = build_agent(
                     &model,
                     &api_key,
+                    &provider,
+                    base_url.as_deref(),
                     &skills,
                     &system_prompt,
                     thinking,
@@ -331,7 +450,11 @@ async fn main() {
 
     // --prompt / -p: single-shot mode with a prompt argument
     if let Some(prompt_text) = config.prompt_arg {
-        eprintln!("{DIM}  yoyo (prompt mode) — model: {model}{RESET}");
+        if provider != "anthropic" {
+            eprintln!("{DIM}  yoyo (prompt mode) — provider: {provider}, model: {model}{RESET}");
+        } else {
+            eprintln!("{DIM}  yoyo (prompt mode) — model: {model}{RESET}");
+        }
         let mut session_total = Usage::default();
         let response = run_prompt(&mut agent, prompt_text.trim(), &mut session_total, &model).await;
         write_output_file(&output_path, &response);
@@ -361,7 +484,13 @@ async fn main() {
         .unwrap_or_else(|_| "(unknown)".to_string());
 
     print_banner();
+    if provider != "anthropic" {
+        println!("{DIM}  provider: {provider}{RESET}");
+    }
     println!("{DIM}  model: {model}{RESET}");
+    if let Some(ref url) = base_url {
+        println!("{DIM}  base_url: {url}{RESET}");
+    }
     if thinking != ThinkingLevel::Off {
         println!("{DIM}  thinking: {thinking:?}{RESET}");
     }
@@ -582,6 +711,8 @@ async fn main() {
                 agent = build_agent(
                     &model,
                     &api_key,
+                    &provider,
+                    base_url.as_deref(),
                     &skills,
                     &system_prompt,
                     thinking,
@@ -611,6 +742,8 @@ async fn main() {
                 agent = build_agent(
                     &model,
                     &api_key,
+                    &provider,
+                    base_url.as_deref(),
                     &skills,
                     &system_prompt,
                     thinking,
@@ -651,6 +784,8 @@ async fn main() {
                 agent = build_agent(
                     &model,
                     &api_key,
+                    &provider,
+                    base_url.as_deref(),
                     &skills,
                     &system_prompt,
                     thinking,
@@ -866,7 +1001,11 @@ async fn main() {
             }
             "/config" => {
                 println!("{DIM}  Configuration:");
+                println!("    provider:   {provider}");
                 println!("    model:      {model}");
+                if let Some(ref url) = base_url {
+                    println!("    base_url:   {url}");
+                }
                 println!("    thinking:   {}", thinking_level_name(thinking));
                 println!(
                     "    max_tokens: {}",

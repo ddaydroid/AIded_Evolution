@@ -89,7 +89,8 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 |---------|------|-------------|-------|
 | Config file | ✅ | ✅ | yoyo reads .yoyo.toml and ~/.config/yoyo/config.toml |
 | Per-project settings | ✅ | ✅ | .yoyo.toml in project directory |
-| Custom tool definitions | ❌ | ✅ | Claude Code supports MCP servers |
+| Custom tool definitions | ✅ | ✅ | yoyo supports MCP servers via `--mcp` (stdio transport) |
+| Multi-provider support | ✅ | ❌ | yoyo supports 10+ providers via `--provider` (anthropic, openai, google, ollama, etc.) |
 | Skills/plugins | ✅ | ✅ | yoyo has --skills; Claude Code has MCP |
 
 ## Error Handling
@@ -114,14 +115,18 @@ Based on this analysis, the highest-impact missing features are:
 4. **Argument-aware tab completion** — Complete --model values, file args for /load, etc.
 5. **Allowlist/blocklist permissions** — Finer-grained safety controls
 
-Recently completed (partial):
+Recently completed:
+- ✅ Multi-provider support (Day 8) — 10+ providers via `--provider` flag
+- ✅ MCP server support (Day 8) — connect to MCP servers via `--mcp`
 - ✅ Markdown rendering (Day 8) — incremental ANSI formatting for streamed output
 - ✅ Tab completion (Day 8) — slash commands + file path completion
 
 ## Stats
 
-- yoyo: ~4,600 lines of Rust across 4 source files
-- 150 tests passing
-- 25 REPL commands
-- 18 CLI flags (+ short aliases)
+- yoyo: ~5,700 lines of Rust across 4 source files
+- 181 tests passing
+- 27 REPL commands
+- 20 CLI flags (+ short aliases)
+- 10+ provider backends
+- MCP server support
 - Config file support (.yoyo.toml)

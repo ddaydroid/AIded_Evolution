@@ -16,10 +16,27 @@ When the user asks you to do something, do it — don't just explain how.
 Use tools proactively: read files to understand context, run commands to verify your work.
 After making changes, run tests or verify the result when appropriate."#;
 
+/// Known provider names for the --provider flag.
+pub const KNOWN_PROVIDERS: &[&str] = &[
+    "anthropic",
+    "openai",
+    "google",
+    "openrouter",
+    "ollama",
+    "xai",
+    "groq",
+    "deepseek",
+    "mistral",
+    "cerebras",
+    "custom",
+];
+
 /// Parsed CLI configuration.
 pub struct Config {
     pub model: String,
     pub api_key: String,
+    pub provider: String,
+    pub base_url: Option<String>,
     pub skills: SkillSet,
     pub system_prompt: String,
     pub thinking: ThinkingLevel,
@@ -57,6 +74,9 @@ pub fn print_help() {
     println!();
     println!("Options:");
     println!("  --model <name>    Model to use (default: claude-opus-4-6)");
+    println!("  --provider <name> Provider: anthropic (default), openai, google, openrouter,");
+    println!("                    ollama, xai, groq, deepseek, mistral, cerebras, custom");
+    println!("  --base-url <url>  Custom API endpoint (e.g., http://localhost:11434/v1)");
     println!("  --thinking <lvl>  Enable extended thinking (off, minimal, low, medium, high)");
     println!("  --max-tokens <n>  Maximum output tokens per response (default: 8192)");
     println!("  --max-turns <n>   Maximum agent turns per prompt (default: 50)");
@@ -66,7 +86,7 @@ pub fn print_help() {
     println!("  --system-file <f> Read system prompt from file");
     println!("  --prompt, -p <t>  Run a single prompt and exit (no REPL)");
     println!("  --output, -o <f>  Write final response text to a file");
-    println!("  --api-key <key>   API key (overrides ANTHROPIC_API_KEY env var)");
+    println!("  --api-key <key>   API key (overrides provider-specific env var)");
     println!("  --mcp <cmd>       Connect to an MCP server via stdio (repeatable)");
     println!("  --no-color        Disable colored output (also respects NO_COLOR env)");
     println!("  --verbose, -v     Show debug info (API errors, request details)");
@@ -103,8 +123,14 @@ pub fn print_help() {
     println!("  /version          Show yoyo version");
     println!();
     println!("Environment:");
-    println!("  ANTHROPIC_API_KEY  API key for Anthropic (required unless --api-key is set)");
-    println!("  API_KEY            Alternative env var for API key");
+    println!("  ANTHROPIC_API_KEY  API key for Anthropic (default provider)");
+    println!("  OPENAI_API_KEY    API key for OpenAI");
+    println!("  GOOGLE_API_KEY    API key for Google/Gemini");
+    println!("  GROQ_API_KEY      API key for Groq");
+    println!("  XAI_API_KEY       API key for xAI");
+    println!("  DEEPSEEK_API_KEY  API key for DeepSeek");
+    println!("  OPENROUTER_API_KEY API key for OpenRouter");
+    println!("  API_KEY            Fallback API key (any provider)");
     println!();
     println!("Config files (searched in order, first found wins):");
     println!("  .yoyo.toml              Project-level config (current directory)");
@@ -112,6 +138,8 @@ pub fn print_help() {
     println!();
     println!("Config file format (key = value):");
     println!("  model = \"claude-sonnet-4-20250514\"");
+    println!("  provider = \"openai\"");
+    println!("  base_url = \"http://localhost:11434/v1\"");
     println!("  thinking = \"medium\"");
     println!("  max_tokens = 4096");
     println!("  max_turns = 20");
@@ -161,6 +189,8 @@ pub fn clamp_temperature(t: f32) -> f32 {
 /// All known CLI flags (both boolean and value-taking).
 const KNOWN_FLAGS: &[&str] = &[
     "--model",
+    "--provider",
+    "--base-url",
     "--thinking",
     "--max-tokens",
     "--max-turns",
@@ -413,6 +443,8 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     // Validate that flags requiring values actually have them
     let flags_needing_values = [
         "--model",
+        "--provider",
+        "--base-url",
         "--thinking",
         "--max-tokens",
         "--max-turns",
@@ -451,29 +483,75 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     // Warn about unknown flags
     warn_unknown_flags(args, &flags_needing_values);
 
-    // API key: --api-key flag > ANTHROPIC_API_KEY env > API_KEY env > config file
+    // Parse --provider flag (CLI > config file > default "anthropic")
+    let provider = args
+        .iter()
+        .position(|a| a == "--provider")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+        .or_else(|| file_config.get("provider").cloned())
+        .unwrap_or_else(|| "anthropic".into())
+        .to_lowercase();
+
+    // Validate provider name
+    if !KNOWN_PROVIDERS.contains(&provider.as_str()) {
+        eprintln!(
+            "{YELLOW}warning:{RESET} Unknown provider '{provider}'. Known providers: {}",
+            KNOWN_PROVIDERS.join(", ")
+        );
+    }
+
+    // Parse --base-url flag (CLI > config file)
+    let base_url = args
+        .iter()
+        .position(|a| a == "--base-url")
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+        .or_else(|| file_config.get("base_url").cloned());
+
+    // API key: --api-key flag > provider-specific env > ANTHROPIC_API_KEY > API_KEY > config file
     let api_key_from_flag = args
         .iter()
         .position(|a| a == "--api-key")
         .and_then(|i| args.get(i + 1))
         .cloned();
 
+    // Choose provider-specific env var name
+    let provider_env_var = provider_api_key_env(&provider);
+
     let api_key = match api_key_from_flag {
         Some(key) if !key.is_empty() => key,
-        _ => match std::env::var("ANTHROPIC_API_KEY").or_else(|_| std::env::var("API_KEY")) {
-            Ok(key) if !key.is_empty() => key,
-            _ => match file_config.get("api_key").cloned() {
-                Some(key) if !key.is_empty() => key,
-                _ => {
-                    eprintln!("{RED}error:{RESET} No API key found.");
-                    eprintln!(
-                        "Set ANTHROPIC_API_KEY env var, use --api-key <key>, or add api_key to .yoyo.toml."
-                    );
-                    eprintln!("Example: ANTHROPIC_API_KEY=sk-ant-... cargo run");
-                    std::process::exit(1);
+        _ => {
+            // Try provider-specific env var first
+            let from_provider_env = provider_env_var
+                .and_then(|var| std::env::var(var).ok())
+                .filter(|k| !k.is_empty());
+            match from_provider_env {
+                Some(key) => key,
+                None => {
+                    // Fallback chain: ANTHROPIC_API_KEY > API_KEY > config file
+                    match std::env::var("ANTHROPIC_API_KEY").or_else(|_| std::env::var("API_KEY")) {
+                        Ok(key) if !key.is_empty() => key,
+                        _ => match file_config.get("api_key").cloned() {
+                            Some(key) if !key.is_empty() => key,
+                            _ => {
+                                // For local/ollama providers, API key is optional
+                                if provider == "ollama" || provider == "custom" {
+                                    "not-needed".to_string()
+                                } else {
+                                    let env_hint = provider_env_var.unwrap_or("ANTHROPIC_API_KEY");
+                                    eprintln!("{RED}error:{RESET} No API key found.");
+                                    eprintln!(
+                                        "Set {env_hint} env var, use --api-key <key>, or add api_key to .yoyo.toml."
+                                    );
+                                    std::process::exit(1);
+                                }
+                            }
+                        },
+                    }
                 }
-            },
-        },
+            }
+        }
     };
 
     let model = args
@@ -482,7 +560,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         .and_then(|i| args.get(i + 1))
         .cloned()
         .or_else(|| file_config.get("model").cloned())
-        .unwrap_or_else(|| "claude-opus-4-6".into());
+        .unwrap_or_else(|| default_model_for_provider(&provider));
 
     let skill_dirs: Vec<String> = args
         .iter()
@@ -623,6 +701,8 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
     Some(Config {
         model,
         api_key,
+        provider,
+        base_url,
         skills,
         system_prompt,
         thinking,
@@ -636,6 +716,39 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         mcp_servers,
         auto_approve,
     })
+}
+
+/// Get the provider-specific environment variable name for the API key.
+/// Returns None for anthropic (it uses the fallback chain) and local providers.
+pub fn provider_api_key_env(provider: &str) -> Option<&'static str> {
+    match provider {
+        "openai" => Some("OPENAI_API_KEY"),
+        "google" => Some("GOOGLE_API_KEY"),
+        "groq" => Some("GROQ_API_KEY"),
+        "xai" => Some("XAI_API_KEY"),
+        "deepseek" => Some("DEEPSEEK_API_KEY"),
+        "openrouter" => Some("OPENROUTER_API_KEY"),
+        "mistral" => Some("MISTRAL_API_KEY"),
+        "cerebras" => Some("CEREBRAS_API_KEY"),
+        "anthropic" => Some("ANTHROPIC_API_KEY"),
+        _ => None,
+    }
+}
+
+/// Get the default model for a given provider.
+pub fn default_model_for_provider(provider: &str) -> String {
+    match provider {
+        "openai" => "gpt-4o".into(),
+        "google" => "gemini-2.0-flash".into(),
+        "openrouter" => "anthropic/claude-sonnet-4-20250514".into(),
+        "ollama" => "llama3.2".into(),
+        "xai" => "grok-3".into(),
+        "groq" => "llama-3.3-70b-versatile".into(),
+        "deepseek" => "deepseek-chat".into(),
+        "mistral" => "mistral-large-latest".into(),
+        "cerebras" => "llama-3.3-70b".into(),
+        _ => "claude-opus-4-6".into(),
+    }
 }
 
 #[cfg(test)]
