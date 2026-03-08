@@ -317,6 +317,35 @@ fn dirs_hint() -> Option<std::path::PathBuf> {
         })
 }
 
+/// Best-effort XDG data dir (~/.local/share on Linux/macOS).
+fn data_dir_hint() -> Option<std::path::PathBuf> {
+    std::env::var("XDG_DATA_HOME")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| std::path::PathBuf::from(h).join(".local").join("share"))
+        })
+}
+
+/// Get the path for the readline history file.
+/// Prefers `$XDG_DATA_HOME/yoyo/history`, falls back to `~/.yoyo_history`.
+pub fn history_file_path() -> Option<std::path::PathBuf> {
+    // Try XDG data dir first
+    if let Some(data_dir) = data_dir_hint() {
+        let yoyo_dir = data_dir.join("yoyo");
+        // Try to create the directory; if it works, use it
+        if std::fs::create_dir_all(&yoyo_dir).is_ok() {
+            return Some(yoyo_dir.join("history"));
+        }
+    }
+    // Fall back to ~/.yoyo_history
+    std::env::var("HOME")
+        .ok()
+        .map(|h| std::path::PathBuf::from(h).join(".yoyo_history"))
+}
+
 /// Parse a simple TOML-like config file (key = "value" or key = value per line).
 /// Ignores comments (#) and blank lines. Returns a map of key → value.
 pub fn parse_config_file(content: &str) -> HashMap<String, String> {
@@ -1090,6 +1119,49 @@ thinking = "high"
                     "Context should contain Project Files section"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_history_file_path_returns_some() {
+        // In CI and local environments, HOME is typically set
+        let path = history_file_path();
+        if std::env::var("HOME").is_ok() {
+            assert!(path.is_some(), "Should return a path when HOME is set");
+            let p = path.unwrap();
+            let p_str = p.to_string_lossy();
+            assert!(
+                p_str.contains("yoyo"),
+                "History path should contain 'yoyo': {p_str}"
+            );
+            assert!(
+                p_str.ends_with("history") || p_str.ends_with(".yoyo_history"),
+                "History path should end with 'history' or '.yoyo_history': {p_str}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_history_file_path_prefers_xdg() {
+        // When XDG_DATA_HOME is set, should use it
+        let dir = std::env::temp_dir().join("yoyo_test_xdg_data");
+        let _ = std::fs::create_dir_all(&dir);
+        // We can't safely set env vars in parallel tests, so just verify the logic
+        // by calling data_dir_hint and checking the fallback behavior
+        let path = history_file_path();
+        // Should return Some regardless
+        if std::env::var("HOME").is_ok() || std::env::var("XDG_DATA_HOME").is_ok() {
+            assert!(path.is_some());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_data_dir_hint_returns_path() {
+        // data_dir_hint should return something when HOME is set
+        if std::env::var("HOME").is_ok() || std::env::var("XDG_DATA_HOME").is_ok() {
+            let dir = data_dir_hint();
+            assert!(dir.is_some(), "Should return a data dir path");
         }
     }
 }

@@ -32,7 +32,9 @@ use cli::*;
 use format::*;
 use prompt::*;
 
-use std::io::{self, BufRead, IsTerminal, Read, Write};
+use rustyline::error::ReadlineError;
+use rustyline::DefaultEditor;
+use std::io::{self, IsTerminal, Read, Write};
 use yoagent::agent::Agent;
 use yoagent::context::{compact_messages, total_tokens, ContextConfig, ExecutionLimits};
 use yoagent::provider::AnthropicProvider;
@@ -268,8 +270,14 @@ async fn main() {
     }
     println!("{DIM}  cwd:   {cwd}{RESET}\n");
 
-    let stdin = io::stdin();
-    let mut lines = stdin.lock().lines();
+    // Set up rustyline editor for interactive REPL
+    let mut rl = DefaultEditor::new().expect("Failed to initialize readline");
+    if let Some(history_path) = history_file_path() {
+        if rl.load_history(&history_path).is_err() {
+            // First run or history file doesn't exist yet — that's fine
+        }
+    }
+
     let mut session_total = Usage::default();
     let mut last_input: Option<String> = None;
 
@@ -279,12 +287,19 @@ async fn main() {
         } else {
             format!("{BOLD}{GREEN}> {RESET}")
         };
-        print!("{prompt}");
-        io::stdout().flush().ok();
 
-        let line = match lines.next() {
-            Some(Ok(l)) => l,
-            _ => break,
+        let line = match rl.readline(&prompt) {
+            Ok(l) => l,
+            Err(ReadlineError::Interrupted) => {
+                // Ctrl+C: cancel current line, print new prompt
+                println!();
+                continue;
+            }
+            Err(ReadlineError::Eof) => {
+                // Ctrl+D: exit
+                break;
+            }
+            Err(_) => break,
         };
 
         let input = line.trim();
@@ -292,9 +307,12 @@ async fn main() {
             continue;
         }
 
+        // Add to readline history
+        let _ = rl.add_history_entry(&line);
+
         // Multi-line input: collect continuation lines
         let input = if needs_continuation(input) {
-            collect_multiline(input, &mut lines)
+            collect_multiline_rl(input, &mut rl)
         } else {
             input.to_string()
         };
@@ -975,6 +993,11 @@ async fn main() {
         auto_compact_if_needed(&mut agent);
     }
 
+    // Save readline history
+    if let Some(history_path) = history_file_path() {
+        let _ = rl.save_history(&history_path);
+    }
+
     // Auto-save session on exit when --continue was used
     if continue_session {
         if let Ok(json) = agent.save_messages() {
@@ -1061,28 +1084,21 @@ fn needs_continuation(line: &str) -> bool {
     line.ends_with('\\') || line.starts_with("```")
 }
 
-/// Collect multi-line input. Supports:
-/// - Backslash continuation: lines ending with `\` continue on the next line
-/// - Code fences: input starting with ``` collects until closing ```
-fn collect_multiline(first_line: &str, lines: &mut io::Lines<io::StdinLock<'_>>) -> String {
+/// Collect multi-line input using rustyline (for interactive REPL mode).
+/// Same logic as `collect_multiline` but uses rustyline's readline for continuation prompts.
+fn collect_multiline_rl(first_line: &str, rl: &mut DefaultEditor) -> String {
     let mut buf = String::new();
+    let cont_prompt = format!("{DIM}  ...{RESET} ");
 
     if first_line.starts_with("```") {
         // Code fence mode: collect until closing ```
         buf.push_str(first_line);
         buf.push('\n');
-        loop {
-            print!("{DIM}  ...{RESET} ");
-            io::stdout().flush().ok();
-            match lines.next() {
-                Some(Ok(line)) => {
-                    buf.push_str(&line);
-                    buf.push('\n');
-                    if line.trim() == "```" {
-                        break;
-                    }
-                }
-                _ => break,
+        while let Ok(line) = rl.readline(&cont_prompt) {
+            buf.push_str(&line);
+            buf.push('\n');
+            if line.trim() == "```" {
+                break;
             }
         }
     } else {
@@ -1093,10 +1109,8 @@ fn collect_multiline(first_line: &str, lines: &mut io::Lines<io::StdinLock<'_>>)
                 current.truncate(current.len() - 1);
                 buf.push_str(&current);
                 buf.push('\n');
-                print!("{DIM}  ...{RESET} ");
-                io::stdout().flush().ok();
-                match lines.next() {
-                    Some(Ok(line)) => {
+                match rl.readline(&cont_prompt) {
+                    Ok(line) => {
                         current = line;
                     }
                     _ => break,

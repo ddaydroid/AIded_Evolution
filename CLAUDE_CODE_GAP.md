@@ -34,7 +34,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Model selection | ✅ | ✅ | --model flag and /model command |
 | Session save/load | ✅ | ✅ | /save, /load, --continue |
 | Git integration | ✅ | ✅ | Branch in prompt, /diff, /undo |
-| Readline / line editing | ❌ | ✅ | yoyo uses raw stdin, no arrow keys/history |
+| Readline / line editing | ✅ | ✅ | rustyline: arrow keys, history (~/.local/share/yoyo/history), Ctrl-A/E/K/W |
 | Tab completion | ❌ | ✅ | Claude Code completes file paths, commands |
 | Fuzzy file search | ❌ | ✅ | Claude Code can fuzzy-find files |
 | Syntax highlighting | ❌ | ✅ | Claude Code highlights code in responses |

@@ -24,6 +24,15 @@ If you're not in a git repo, you get a plain prompt:
 > _
 ```
 
+## Line editing & history
+
+yoyo uses [rustyline](https://crates.io/crates/rustyline) for a full readline experience:
+
+- **Arrow keys**: Navigate within the current line (← →) and through command history (↑ ↓)
+- **History recall**: Previous inputs are saved across sessions
+- **Keyboard shortcuts**: Ctrl-A (start of line), Ctrl-E (end of line), Ctrl-K (kill to end), Ctrl-W (delete word back)
+- **History file**: Stored at `$XDG_DATA_HOME/yoyo/history` (defaults to `~/.local/share/yoyo/history`)
+
 ## How it works
 
 1. You type a message
