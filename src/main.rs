@@ -19,6 +19,7 @@
 //!   /quit, /exit    Exit the agent
 //!   /clear          Clear conversation history
 //!   /commit [msg]   Commit staged changes (AI-generates message if no msg)
+//!   /fix            Auto-fix build/lint errors (runs checks, sends failures to AI)
 //!   /git <subcmd>   Quick git: status, log, add, diff, branch, stash
 //!   /model <name>   Switch model mid-session
 //!   /search <query> Search conversation history
@@ -606,6 +607,9 @@ async fn main() {
                 println!("  /save [path]       Save session to file (default: yoyo-session.json)");
                 println!("  /load [path]       Load session from file");
                 println!("  /diff              Show git diff summary of uncommitted changes");
+                println!(
+                    "  /fix               Auto-fix build/lint errors (runs checks, sends failures to AI)"
+                );
                 println!("  /git <subcmd>      Quick git: status, log, add, diff, branch, stash");
                 println!("  /undo              Revert all uncommitted changes (git checkout)");
                 println!(
@@ -980,6 +984,52 @@ async fn main() {
                 } else {
                     println!("\n{RED}  Some checks failed ✗{RESET}\n");
                 }
+                continue;
+            }
+            "/fix" => {
+                let project_type =
+                    detect_project_type(&std::env::current_dir().unwrap_or_default());
+                if project_type == ProjectType::Unknown {
+                    println!(
+                        "{DIM}  No recognized project found. Looked for: Cargo.toml, package.json, pyproject.toml, setup.py, go.mod, Makefile{RESET}\n"
+                    );
+                    continue;
+                }
+                println!("{DIM}  Detected project: {project_type}{RESET}");
+                println!("{DIM}  Running health checks...{RESET}");
+                let results = run_health_checks_full_output(&project_type);
+                if results.is_empty() {
+                    println!("{DIM}  No checks configured for {project_type}{RESET}\n");
+                    continue;
+                }
+                // Show quick summary
+                for (name, passed, _) in &results {
+                    let icon = if *passed {
+                        format!("{GREEN}✓{RESET}")
+                    } else {
+                        format!("{RED}✗{RESET}")
+                    };
+                    let status = if *passed { "ok" } else { "FAIL" };
+                    println!("  {icon} {name}: {status}");
+                }
+                // Collect failures with full output
+                let failures: Vec<(&str, &str)> = results
+                    .iter()
+                    .filter(|(_, passed, _)| !passed)
+                    .map(|(name, _, output)| (*name, output.as_str()))
+                    .collect();
+                if failures.is_empty() {
+                    println!("\n{GREEN}  All checks passed — nothing to fix ✓{RESET}\n");
+                    continue;
+                }
+                let fail_count = failures.len();
+                println!(
+                    "\n{YELLOW}  Sending {fail_count} failure(s) to AI for fixing...{RESET}\n"
+                );
+                let fix_prompt = build_fix_prompt(&failures);
+                last_input = Some(fix_prompt.clone());
+                run_prompt(&mut agent, &fix_prompt, &mut session_total, &model).await;
+                auto_compact_if_needed(&mut agent);
                 continue;
             }
             "/history" => {
@@ -1856,6 +1906,62 @@ fn run_health_check_for_project(project_type: &ProjectType) -> Vec<(&'static str
     results
 }
 
+/// Run health checks for a project type and capture full error output for failures.
+/// Returns (name, passed, full_output) tuples. The full_output includes both stdout and stderr
+/// for failed checks, which is useful for sending to the AI for auto-fixing.
+fn run_health_checks_full_output(project_type: &ProjectType) -> Vec<(&'static str, bool, String)> {
+    let checks = health_checks_for_project(project_type);
+
+    let mut results = Vec::new();
+    for (name, args) in checks {
+        let output = std::process::Command::new(args[0])
+            .args(&args[1..])
+            .output();
+        match output {
+            Ok(o) if o.status.success() => {
+                results.push((name, true, String::new()));
+            }
+            Ok(o) => {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                let mut full_output = String::new();
+                if !stdout.is_empty() {
+                    full_output.push_str(&stdout);
+                }
+                if !stderr.is_empty() {
+                    if !full_output.is_empty() {
+                        full_output.push('\n');
+                    }
+                    full_output.push_str(&stderr);
+                }
+                results.push((name, false, full_output));
+            }
+            Err(e) => {
+                results.push((name, false, format!("ERROR: {e}")));
+            }
+        }
+    }
+    results
+}
+
+/// Build a prompt describing health check failures for the AI to fix.
+/// Takes a slice of (check_name, error_output) tuples.
+fn build_fix_prompt(failures: &[(&str, &str)]) -> String {
+    if failures.is_empty() {
+        return String::new();
+    }
+    let mut prompt = String::from(
+        "Fix the following build/lint errors in this project. Read the relevant files, understand the errors, and apply fixes:\n\n",
+    );
+    for (name, output) in failures {
+        prompt.push_str(&format!("## {name} errors:\n```\n{output}\n```\n\n"));
+    }
+    prompt.push_str(
+        "After fixing, run the failing checks again to verify. Fix any remaining issues.",
+    );
+    prompt
+}
+
 /// Build a directory tree from `git ls-files`, grouped by directory.
 /// Returns a formatted string showing the project structure up to `max_depth` levels.
 /// Falls back to a simple directory walk if not in a git repo.
@@ -1927,9 +2033,9 @@ fn format_tree_from_paths(paths: &[String], max_depth: usize) -> String {
 
 /// Known REPL command prefixes. Used to detect unknown slash commands.
 const KNOWN_COMMANDS: &[&str] = &[
-    "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/cost", "/status", "/tokens",
-    "/save", "/load", "/diff", "/undo", "/health", "/retry", "/history", "/search", "/model",
-    "/think", "/config", "/context", "/init", "/version", "/run", "/tree", "/pr", "/git",
+    "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/cost", "/fix", "/status",
+    "/tokens", "/save", "/load", "/diff", "/undo", "/health", "/retry", "/history", "/search",
+    "/model", "/think", "/config", "/context", "/init", "/version", "/run", "/tree", "/pr", "/git",
 ];
 
 /// Represents a parsed `/git` subcommand.
@@ -2194,8 +2300,9 @@ mod tests {
     fn test_command_help_recognized() {
         let commands = [
             "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/config", "/context",
-            "/init", "/status", "/tokens", "/save", "/load", "/diff", "/undo", "/health", "/retry",
-            "/run", "/history", "/search", "/model", "/think", "/version", "/tree", "/pr", "/git",
+            "/cost", "/fix", "/init", "/status", "/tokens", "/save", "/load", "/diff", "/undo",
+            "/health", "/retry", "/run", "/history", "/search", "/model", "/think", "/version",
+            "/tree", "/pr", "/git",
         ];
         for cmd in &commands {
             assert!(
@@ -3155,5 +3262,67 @@ diff --git a/src/old.rs b/src/old.rs
         let tools_confirm = build_tools(false);
         assert_eq!(tools_approved.len(), 6);
         assert_eq!(tools_confirm.len(), 6);
+    }
+
+    #[test]
+    fn test_fix_command_recognized() {
+        assert!(!is_unknown_command("/fix"));
+        assert!(
+            KNOWN_COMMANDS.contains(&"/fix"),
+            "/fix should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn test_run_health_checks_full_output_returns_results() {
+        // In a Rust project, should return results with full error output
+        let project_type = detect_project_type(&std::env::current_dir().unwrap());
+        assert_eq!(project_type, ProjectType::Rust);
+        let results = run_health_checks_full_output(&project_type);
+        assert!(
+            !results.is_empty(),
+            "Should return at least one check result"
+        );
+        for (name, passed, _output) in &results {
+            assert!(!name.is_empty(), "Check name should not be empty");
+            if *name == "build" {
+                assert!(passed, "cargo build should pass in test environment");
+            }
+        }
+    }
+
+    #[test]
+    fn test_build_fix_prompt_with_failures() {
+        let failures = vec![
+            (
+                "build",
+                "error[E0308]: mismatched types\n  --> src/main.rs:42",
+            ),
+            (
+                "clippy",
+                "warning: unused variable `x`\n  --> src/lib.rs:10",
+            ),
+        ];
+        let prompt = build_fix_prompt(&failures);
+        assert!(prompt.contains("build"), "Prompt should mention build");
+        assert!(prompt.contains("clippy"), "Prompt should mention clippy");
+        assert!(
+            prompt.contains("error[E0308]"),
+            "Prompt should include build error"
+        );
+        assert!(
+            prompt.contains("unused variable"),
+            "Prompt should include clippy warning"
+        );
+    }
+
+    #[test]
+    fn test_build_fix_prompt_empty_failures() {
+        let failures: Vec<(&str, &str)> = vec![];
+        let prompt = build_fix_prompt(&failures);
+        assert!(
+            prompt.is_empty() || prompt.contains("Fix"),
+            "Empty failures should produce empty or minimal prompt"
+        );
     }
 }
