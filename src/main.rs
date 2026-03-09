@@ -42,6 +42,8 @@ use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::Editor;
 use std::io::{self, IsTerminal, Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use yoagent::agent::Agent;
 use yoagent::context::{compact_messages, total_tokens, ContextConfig, ExecutionLimits};
 use yoagent::provider::{
@@ -166,11 +168,22 @@ impl rustyline::Helper for YoyoHelper {}
 
 /// Build the tool set, optionally with a bash confirmation prompt.
 /// When `auto_approve` is false (default), bash commands require user approval.
+/// The "always" option sets a session-wide flag so subsequent commands are auto-approved.
 fn build_tools(auto_approve: bool) -> Vec<Box<dyn AgentTool>> {
     let bash = if auto_approve {
         BashTool::default()
     } else {
-        BashTool::default().with_confirm(|cmd: &str| {
+        let always_approved = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&always_approved);
+        BashTool::default().with_confirm(move |cmd: &str| {
+            // If user previously chose "always", skip the prompt
+            if flag.load(Ordering::Relaxed) {
+                eprintln!(
+                    "{GREEN}  ✓ Auto-approved: {RESET}{}",
+                    truncate_with_ellipsis(cmd, 120)
+                );
+                return true;
+            }
             use std::io::BufRead;
             // Show the command and ask for approval
             eprint!(
@@ -184,7 +197,14 @@ fn build_tools(auto_approve: bool) -> Vec<Box<dyn AgentTool>> {
                 return false;
             }
             let response = response.trim().to_lowercase();
-            matches!(response.as_str(), "y" | "yes" | "a" | "always")
+            let approved = matches!(response.as_str(), "y" | "yes" | "a" | "always");
+            if matches!(response.as_str(), "a" | "always") {
+                flag.store(true, Ordering::Relaxed);
+                eprintln!(
+                    "{GREEN}  ✓ All subsequent commands will be auto-approved this session.{RESET}"
+                );
+            }
+            approved
         })
     };
     vec![
@@ -2670,5 +2690,122 @@ diff --git a/src/old.rs b/src/old.rs
         assert_eq!(parse_git_args("stash pop"), GitSubcommand::StashPop);
         assert_eq!(parse_git_args("STASH POP"), GitSubcommand::StashPop);
         assert_eq!(parse_git_args("stash Pop"), GitSubcommand::StashPop);
+    }
+
+    #[test]
+    fn test_always_approve_flag_starts_false() {
+        // The "always" flag should start as false
+        let flag = Arc::new(AtomicBool::new(false));
+        assert!(!flag.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_always_approve_flag_persists_across_clones() {
+        // Simulates the confirm closure: flag is shared via Arc
+        let always_approved = Arc::new(AtomicBool::new(false));
+        let flag_clone = Arc::clone(&always_approved);
+
+        // Initially not set
+        assert!(!flag_clone.load(Ordering::Relaxed));
+
+        // User answers "always" — set the flag
+        always_approved.store(true, Ordering::Relaxed);
+
+        // The clone sees the update (simulates next confirm call)
+        assert!(flag_clone.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_always_approve_response_matching() {
+        // Verify the response matching logic for "always" variants
+        let responses_that_approve = ["y", "yes", "a", "always"];
+        let responses_that_deny = ["n", "no", "", "maybe", "nope"];
+
+        for r in &responses_that_approve {
+            let normalized = r.trim().to_lowercase();
+            assert!(
+                matches!(normalized.as_str(), "y" | "yes" | "a" | "always"),
+                "Expected '{}' to be approved",
+                r
+            );
+        }
+
+        for r in &responses_that_deny {
+            let normalized = r.trim().to_lowercase();
+            assert!(
+                !matches!(normalized.as_str(), "y" | "yes" | "a" | "always"),
+                "Expected '{}' to be denied",
+                r
+            );
+        }
+    }
+
+    #[test]
+    fn test_always_approve_only_on_a_or_always() {
+        // Only "a" and "always" should set the persist flag, not "y" or "yes"
+        let always_responses = ["a", "always"];
+        let single_responses = ["y", "yes"];
+
+        for r in &always_responses {
+            let normalized = r.trim().to_lowercase();
+            assert!(
+                matches!(normalized.as_str(), "a" | "always"),
+                "Expected '{}' to trigger always-approve",
+                r
+            );
+        }
+
+        for r in &single_responses {
+            let normalized = r.trim().to_lowercase();
+            assert!(
+                !matches!(normalized.as_str(), "a" | "always"),
+                "Expected '{}' NOT to trigger always-approve",
+                r
+            );
+        }
+    }
+
+    #[test]
+    fn test_always_approve_flag_used_in_confirm_simulation() {
+        // End-to-end simulation of the confirm flow with "always"
+        let always_approved = Arc::new(AtomicBool::new(false));
+
+        // Simulate three bash commands in sequence
+        let commands = ["ls", "echo hello", "cat file.txt"];
+        let user_responses = ["a", "", ""]; // user answers "always" first time
+
+        for (i, cmd) in commands.iter().enumerate() {
+            let approved = if always_approved.load(Ordering::Relaxed) {
+                // Auto-approved — no prompt needed
+                true
+            } else {
+                let response = user_responses[i].trim().to_lowercase();
+                let result = matches!(response.as_str(), "y" | "yes" | "a" | "always");
+                if matches!(response.as_str(), "a" | "always") {
+                    always_approved.store(true, Ordering::Relaxed);
+                }
+                result
+            };
+
+            match i {
+                0 => assert!(
+                    approved,
+                    "First command '{}' should be approved via 'a'",
+                    cmd
+                ),
+                1 => assert!(approved, "Second command '{}' should be auto-approved", cmd),
+                2 => assert!(approved, "Third command '{}' should be auto-approved", cmd),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn test_build_tools_returns_six_tools() {
+        // build_tools should return 6 tools regardless of auto_approve
+        let tools_approved = build_tools(true);
+        let tools_confirm = build_tools(false);
+        assert_eq!(tools_approved.len(), 6);
+        assert_eq!(tools_confirm.len(), 6);
     }
 }
