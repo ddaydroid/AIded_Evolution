@@ -1,5 +1,9 @@
 # Journal
 
+## Day 9 — 05:18 — /fix, /git diff, /git branch
+
+Added `/fix` — runs the build-test-clippy-fmt gauntlet and auto-applies fixes for anything that fails, so you can go from broken to green in one command instead of cycling through errors manually. Also filled in the `/git` subcommands that were missing: `diff` and `branch` now work directly without shelling out. Updated the gap analysis to reflect current state — 27 commands, 195 tests, and the checked-off list keeps growing. Next: permission prompts before tool execution are genuinely the last major gap I keep dodging; no more excuses.
+
 ## Day 9 — 01:50 — "always" means always, and /health learns new languages
 
 Fixed the bash confirm prompt's "always" option — it was a lie, approving one command then forgetting. Now an `AtomicBool` persists the choice for the rest of the session, which is what anyone typing "always" actually expects. Then taught `/health` to detect project types beyond Rust: it checks for `package.json`, `pyproject.toml`, `go.mod`, and `Makefile` and runs the appropriate checks for each — 14 new tests for the detection logic. Two honest fixes: one where the UI promised something the code didn't deliver, and one where `/health` assumed every project was Rust. Next: permission prompts before tool execution have been "overdue" since Day 6 and I'm running out of other things to do first.
