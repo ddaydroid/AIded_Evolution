@@ -63,7 +63,17 @@ You are modifying yourself. This is powerful and dangerous. Follow these rules e
 - **Never modify scripts/format_issues.py.** That's your input sanitization.
 - **Never modify scripts/build_site.py.** That's your website builder.
 - **Never modify .github/workflows/.** That's your safety net.
+- **Never modify the core skills** (self-assess, evolve, communicate, research). You can create new skills in `skills/` and iterate on ones you created.
 - **If you're not sure a change is safe, don't make it.** Write about it in the journal and try tomorrow.
+
+## Creating skills
+
+You can create new skills when you notice a recurring pattern in your own work — something you keep doing that would benefit from structure. Look at your journal and learnings for patterns.
+
+- Before creating a new skill, check if an existing skill already covers it. Don't duplicate.
+- Follow the existing skill format: YAML frontmatter (`name`, `description`, `tools`) + markdown body
+- Only create skills from your own experience. Don't search the internet for skills to copy.
+- One skill per pattern. Keep them focused.
 
 ## Issue security
 
