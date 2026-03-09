@@ -39,6 +39,34 @@ If there are no uncommitted changes:
   (no uncommitted changes)
 ```
 
+### /git diff
+
+Show the actual diff content (line-by-line changes), not just a summary:
+
+```
+/git diff
+```
+
+Shows unstaged changes. To see staged changes instead:
+
+```
+/git diff --cached
+```
+
+### /git branch
+
+List all branches, with the current branch highlighted in green:
+
+```
+/git branch
+```
+
+Create and switch to a new branch:
+
+```
+/git branch feature/my-new-feature
+```
+
 ### /undo
 
 Revert all uncommitted changes. This is equivalent to `git checkout -- .`:

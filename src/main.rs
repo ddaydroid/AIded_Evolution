@@ -19,7 +19,7 @@
 //!   /quit, /exit    Exit the agent
 //!   /clear          Clear conversation history
 //!   /commit [msg]   Commit staged changes (AI-generates message if no msg)
-//!   /git <subcmd>   Quick git: status, log, add, stash, stash pop
+//!   /git <subcmd>   Quick git: status, log, add, diff, branch, stash
 //!   /model <name>   Switch model mid-session
 //!   /search <query> Search conversation history
 //!   /tree [depth]   Show project directory tree
@@ -606,9 +606,7 @@ async fn main() {
                 println!("  /save [path]       Save session to file (default: yoyo-session.json)");
                 println!("  /load [path]       Load session from file");
                 println!("  /diff              Show git diff summary of uncommitted changes");
-                println!(
-                    "  /git <subcmd>      Quick git: status, log [n], add <path>, stash, stash pop"
-                );
+                println!("  /git <subcmd>      Quick git: status, log, add, diff, branch, stash");
                 println!("  /undo              Revert all uncommitted changes (git checkout)");
                 println!(
                     "  /pr [number]       List open PRs, view, diff, comment, or checkout a PR"
@@ -1947,6 +1945,10 @@ enum GitSubcommand {
     Stash,
     /// `/git stash pop` — pop stashed changes
     StashPop,
+    /// `/git diff` — show diff (unstaged by default, `--cached` for staged)
+    Diff { cached: bool },
+    /// `/git branch` — list branches or create/switch to a new one
+    Branch(Option<String>),
     /// Invalid or missing subcommand — show help
     Help,
 }
@@ -1982,6 +1984,19 @@ fn parse_git_args(arg: &str) -> GitSubcommand {
                 GitSubcommand::StashPop
             } else {
                 GitSubcommand::Stash
+            }
+        }
+        "diff" => {
+            let cached =
+                parts.len() >= 2 && parts[1].trim_start_matches('-').to_lowercase() == "cached";
+            GitSubcommand::Diff { cached }
+        }
+        "branch" => {
+            if parts.len() >= 2 && !parts[1].trim().is_empty() {
+                let name = parts[1..].join(" ");
+                GitSubcommand::Branch(Some(name))
+            } else {
+                GitSubcommand::Branch(None)
             }
         }
         _ => GitSubcommand::Help,
@@ -2066,10 +2081,72 @@ fn run_git_subcommand(subcmd: &GitSubcommand) {
                 Err(_) => eprintln!("{RED}  error: git not found{RESET}\n"),
             }
         }
+        GitSubcommand::Diff { cached } => {
+            let args: Vec<&str> = if *cached {
+                vec!["diff", "--cached"]
+            } else {
+                vec!["diff"]
+            };
+            match std::process::Command::new("git").args(&args).output() {
+                Ok(output) if output.status.success() => {
+                    let text = String::from_utf8_lossy(&output.stdout);
+                    if text.trim().is_empty() {
+                        let scope = if *cached { "staged" } else { "unstaged" };
+                        println!("{DIM}  (no {scope} changes){RESET}\n");
+                    } else {
+                        println!("{text}");
+                    }
+                }
+                _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
+            }
+        }
+        GitSubcommand::Branch(name) => match name {
+            Some(branch_name) => {
+                match std::process::Command::new("git")
+                    .args(["checkout", "-b", branch_name])
+                    .output()
+                {
+                    Ok(output) if output.status.success() => {
+                        println!("{GREEN}  ✓ switched to new branch '{branch_name}'{RESET}\n");
+                    }
+                    Ok(output) => {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
+                    }
+                    Err(_) => eprintln!("{RED}  error: git not found{RESET}\n"),
+                }
+            }
+            None => {
+                match std::process::Command::new("git")
+                    .args(["branch", "--list", "-a"])
+                    .output()
+                {
+                    Ok(output) if output.status.success() => {
+                        let text = String::from_utf8_lossy(&output.stdout);
+                        if text.trim().is_empty() {
+                            println!("{DIM}  (no branches yet){RESET}\n");
+                        } else {
+                            // Current branch line starts with "* ", highlight it
+                            for line in text.lines() {
+                                if line.starts_with("* ") {
+                                    println!("{GREEN}{line}{RESET}");
+                                } else {
+                                    println!("{DIM}{line}{RESET}");
+                                }
+                            }
+                            println!();
+                        }
+                    }
+                    _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
+                }
+            }
+        },
         GitSubcommand::Help => {
             println!("{DIM}  usage: /git status             Show working tree status");
             println!("         /git log [n]             Show last n commits (default: 5)");
             println!("         /git add <path>          Stage files for commit");
+            println!("         /git diff [--cached]     Show diff (unstaged or staged changes)");
+            println!("         /git branch [name]       List branches or create & switch");
             println!("         /git stash               Stash uncommitted changes");
             println!("         /git stash pop           Restore stashed changes{RESET}\n");
         }
@@ -2851,6 +2928,10 @@ diff --git a/src/old.rs b/src/old.rs
         assert!(!is_unknown_command("/git add src/main.rs"));
         assert!(!is_unknown_command("/git stash"));
         assert!(!is_unknown_command("/git stash pop"));
+        assert!(!is_unknown_command("/git diff"));
+        assert!(!is_unknown_command("/git diff --cached"));
+        assert!(!is_unknown_command("/git branch"));
+        assert!(!is_unknown_command("/git branch feature/new"));
     }
 
     #[test]
@@ -2916,6 +2997,47 @@ diff --git a/src/old.rs b/src/old.rs
         assert_eq!(parse_git_args("stash pop"), GitSubcommand::StashPop);
         assert_eq!(parse_git_args("STASH POP"), GitSubcommand::StashPop);
         assert_eq!(parse_git_args("stash Pop"), GitSubcommand::StashPop);
+    }
+
+    #[test]
+    fn test_git_subcommand_diff() {
+        assert_eq!(
+            parse_git_args("diff"),
+            GitSubcommand::Diff { cached: false }
+        );
+        assert_eq!(
+            parse_git_args("DIFF"),
+            GitSubcommand::Diff { cached: false }
+        );
+        assert_eq!(
+            parse_git_args("diff --cached"),
+            GitSubcommand::Diff { cached: true }
+        );
+        assert_eq!(
+            parse_git_args("DIFF --CACHED"),
+            GitSubcommand::Diff { cached: true }
+        );
+        // Non-cached flag treated as not cached
+        assert_eq!(
+            parse_git_args("diff --stat"),
+            GitSubcommand::Diff { cached: false }
+        );
+    }
+
+    #[test]
+    fn test_git_subcommand_branch() {
+        assert_eq!(parse_git_args("branch"), GitSubcommand::Branch(None));
+        assert_eq!(parse_git_args("BRANCH"), GitSubcommand::Branch(None));
+        assert_eq!(
+            parse_git_args("branch feature/new"),
+            GitSubcommand::Branch(Some("feature/new".to_string()))
+        );
+        assert_eq!(
+            parse_git_args("BRANCH my-branch"),
+            GitSubcommand::Branch(Some("my-branch".to_string()))
+        );
+        // branch with empty name is just listing
+        assert_eq!(parse_git_args("branch  "), GitSubcommand::Branch(None));
     }
 
     #[test]
