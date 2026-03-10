@@ -20,6 +20,7 @@
 //!   /clear          Clear conversation history
 //!   /commit [msg]   Commit staged changes (AI-generates message if no msg)
 //!   /docs <crate>   Look up docs.rs documentation for a Rust crate
+//!   /docs <c> <i>   Look up a specific item within a crate
 //!   /fix            Auto-fix build/lint errors (runs checks, sends failures to AI)
 //!   /git <subcmd>   Quick git: status, log, add, diff, branch, stash
 //!   /model <name>   Switch model mid-session
@@ -669,7 +670,7 @@ async fn main() {
                 println!("  /config            Show all current settings");
                 println!("  /context           Show loaded project context files");
                 println!("  /cost              Show estimated session cost");
-                println!("  /docs <crate>      Look up docs.rs documentation for a Rust crate");
+                println!("  /docs <crate> [item] Look up docs.rs documentation for a Rust crate");
                 println!("  /init              Create a starter YOYO.md project context file");
                 println!("  /model <name>      Switch model (preserves conversation)");
                 println!(
@@ -1338,19 +1339,33 @@ async fn main() {
                 continue;
             }
             "/docs" => {
-                println!("{DIM}  usage: /docs <crate>");
-                println!("  Look up docs.rs documentation for a Rust crate.{RESET}\n");
+                println!("{DIM}  usage: /docs <crate> [item]");
+                println!("  Look up docs.rs documentation for a Rust crate.");
+                println!("  Examples: /docs serde, /docs tokio task{RESET}\n");
                 continue;
             }
             s if s.starts_with("/docs ") => {
-                let crate_name = s.trim_start_matches("/docs ").trim();
-                if crate_name.is_empty() {
-                    println!("{DIM}  usage: /docs <crate>{RESET}\n");
+                let args = s.trim_start_matches("/docs ").trim();
+                if args.is_empty() {
+                    println!("{DIM}  usage: /docs <crate> [item]{RESET}\n");
                     continue;
                 }
-                let (found, summary) = fetch_docs_summary(crate_name);
+                let parts: Vec<&str> = args.splitn(2, char::is_whitespace).collect();
+                let crate_name = parts[0].trim();
+                let item_name = parts.get(1).map(|s| s.trim()).unwrap_or("");
+
+                let (found, summary) = if item_name.is_empty() {
+                    fetch_docs_summary(crate_name)
+                } else {
+                    fetch_docs_item(crate_name, item_name)
+                };
                 if found {
-                    println!("{GREEN}  ✓ {crate_name}{RESET}");
+                    let label = if item_name.is_empty() {
+                        crate_name.to_string()
+                    } else {
+                        format!("{crate_name}::{item_name}")
+                    };
+                    println!("{GREEN}  ✓ {label}{RESET}");
                     println!("{DIM}{summary}{RESET}\n");
                 } else {
                     println!("{RED}  ✗ {summary}{RESET}\n");
@@ -1733,60 +1748,238 @@ fn run_shell_command(cmd: &str) {
     }
 }
 
-/// Fetch a summary from docs.rs for a given Rust crate.
-/// Returns (found, summary_text). If the crate exists, `found` is true and `summary_text`
-/// contains the URL and any extracted description. If not found or on error, `found` is false.
-fn fetch_docs_summary(crate_name: &str) -> (bool, String) {
-    // Validate crate name: only alphanumeric, hyphens, underscores
-    if crate_name.is_empty()
-        || !crate_name
+/// Validate a crate name: only alphanumeric, hyphens, underscores.
+fn is_valid_crate_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
             .chars()
             .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Fetch HTML from a docs.rs URL. Returns Ok(body) or Err(message).
+fn fetch_docs_html(url: &str) -> Result<String, String> {
+    let output = std::process::Command::new("curl")
+        .args(["-sL", "--max-time", "10", url])
+        .output()
+        .map_err(|e| format!("Error fetching docs: {e}"))?;
+
+    if !output.status.success() || output.stdout.is_empty() {
+        return Err("Could not reach docs.rs".to_string());
+    }
+
+    let body = String::from_utf8_lossy(&output.stdout).to_string();
+
+    if body.contains("This crate does not exist")
+        || body.contains("failed to build")
+        || body.contains("The requested resource does not exist")
     {
+        return Err("not found on docs.rs".to_string());
+    }
+
+    Ok(body)
+}
+
+/// A single API item parsed from a docs.rs crate page.
+#[derive(Debug, Clone, PartialEq)]
+struct DocsItem {
+    kind: String, // "mod", "struct", "enum", "trait", "fn", "type", "macro"
+    name: String, // item name (e.g. "Serialize", "task")
+}
+
+/// Parse API items from docs.rs HTML.
+/// Extracts items matching the pattern:
+/// `class="(mod|struct|enum|trait|fn|type|macro)" href="..." title="...">name`
+fn parse_docs_items(html: &str) -> Vec<DocsItem> {
+    let mut items = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let kinds = ["mod", "struct", "enum", "trait", "fn", "type", "macro"];
+
+    // Scan for patterns like: class="mod" href="..." title="...">name
+    for kind in &kinds {
+        let pattern = format!("class=\"{kind}\" href=\"");
+        let mut search_from = 0;
+
+        while let Some(pos) = html[search_from..].find(&pattern) {
+            let abs_pos = search_from + pos;
+            search_from = abs_pos + pattern.len();
+
+            // Find the title attribute to extract the full name
+            let after_class = &html[abs_pos..];
+            // Find the closing > after the class attribute
+            let Some(gt_pos) = after_class.find('>') else {
+                continue;
+            };
+            // Find the end of the displayed text (next < tag)
+            let text_start = abs_pos + gt_pos + 1;
+            let Some(lt_pos) = html[text_start..].find('<') else {
+                continue;
+            };
+
+            // Try to get name from title attribute (more reliable, not truncated)
+            let tag_content = &after_class[..gt_pos];
+            let name = if let Some(title_start) = tag_content.find("title=\"") {
+                let title_after = &tag_content[title_start + 7..];
+                if let Some(title_end) = title_after.find('"') {
+                    let title = &title_after[..title_end];
+                    // Title is like "mod tokio::task" — extract last segment
+                    title.rsplit("::").next().unwrap_or(title).to_string()
+                } else {
+                    html[text_start..text_start + lt_pos].trim().to_string()
+                }
+            } else {
+                html[text_start..text_start + lt_pos].trim().to_string()
+            };
+
+            if !name.is_empty() {
+                let key = format!("{kind}:{name}");
+                if seen.insert(key) {
+                    items.push(DocsItem {
+                        kind: kind.to_string(),
+                        name,
+                    });
+                }
+            }
+        }
+    }
+
+    items
+}
+
+/// Format parsed docs items into a grouped display string.
+/// Each category is capped at `max_per_kind` items with a "+N more" suffix.
+fn format_docs_items(items: &[DocsItem], max_per_kind: usize) -> String {
+    use std::collections::BTreeMap;
+
+    // Group items by kind, preserving order with BTreeMap
+    let mut groups: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for item in items {
+        groups.entry(&item.kind).or_default().push(&item.name);
+    }
+
+    if groups.is_empty() {
+        return String::new();
+    }
+
+    // Display order: modules first, then structs, enums, traits, functions, types, macros
+    let display_order = ["mod", "struct", "enum", "trait", "fn", "type", "macro"];
+    let kind_labels: std::collections::HashMap<&str, &str> = [
+        ("mod", "Modules"),
+        ("struct", "Structs"),
+        ("enum", "Enums"),
+        ("trait", "Traits"),
+        ("fn", "Functions"),
+        ("type", "Types"),
+        ("macro", "Macros"),
+    ]
+    .into_iter()
+    .collect();
+
+    let mut output = String::new();
+    for kind in &display_order {
+        if let Some(names) = groups.get(kind) {
+            let label = kind_labels.get(kind).unwrap_or(kind);
+            let total = names.len();
+            let shown: Vec<&str> = names.iter().take(max_per_kind).copied().collect();
+            let list = shown.join(", ");
+            if total > max_per_kind {
+                let more = total - max_per_kind;
+                output.push_str(&format!("  {label}: {list}, +{more} more\n"));
+            } else {
+                output.push_str(&format!("  {label}: {list}\n"));
+            }
+        }
+    }
+
+    // Trim trailing newline
+    if output.ends_with('\n') {
+        output.truncate(output.len() - 1);
+    }
+
+    output
+}
+
+/// Fetch a summary from docs.rs for a given Rust crate.
+/// Returns (found, summary_text). If the crate exists, `found` is true and `summary_text`
+/// contains the URL, description, and API item overview. If not found or on error, `found` is false.
+fn fetch_docs_summary(crate_name: &str) -> (bool, String) {
+    if !is_valid_crate_name(crate_name) {
         return (false, format!("Invalid crate name: '{crate_name}'"));
     }
 
-    let url = format!(
-        "https://docs.rs/{crate_name}/latest/{}/",
-        crate_name.replace('-', "_")
-    );
+    let crate_mod = crate_name.replace('-', "_");
+    let url = format!("https://docs.rs/{crate_name}/latest/{crate_mod}/");
 
-    // Use curl to fetch the page (follows redirects, silent mode)
-    let output = std::process::Command::new("curl")
-        .args(["-sL", "--max-time", "10", &url])
-        .output();
-
-    match output {
-        Ok(o) if o.status.success() => {
-            let body = String::from_utf8_lossy(&o.stdout);
-
-            // Check if docs.rs returned a "not found" page
-            if body.contains("This crate does not exist")
-                || body.contains("failed to build")
-                || body.contains("The requested resource does not exist")
-                || o.stdout.is_empty()
-            {
-                return (false, format!("Crate '{crate_name}' not found on docs.rs"));
-            }
-
-            // Try to extract the crate description from the page
-            // docs.rs puts it in a <meta name="description" content="..."> tag
-            let description = extract_meta_description(&body);
-
-            let mut summary = format!(
-                "  📦 https://docs.rs/{crate_name}/latest/{}/\n",
-                crate_name.replace('-', "_")
-            );
-            if let Some(desc) = description {
-                summary.push_str(&format!("  📝 {desc}"));
-            } else {
-                summary.push_str("  Docs available at the URL above.");
-            }
-            (true, summary)
+    let body = match fetch_docs_html(&url) {
+        Ok(body) => body,
+        Err(e) if e.contains("not found") => {
+            return (false, format!("Crate '{crate_name}' {e}"));
         }
-        Ok(_) => (false, format!("Could not reach docs.rs for '{crate_name}'")),
-        Err(e) => (false, format!("Error fetching docs: {e}")),
+        Err(e) if e.contains("Could not reach") => {
+            return (false, format!("{e} for '{crate_name}'"));
+        }
+        Err(e) => return (false, e),
+    };
+
+    let description = extract_meta_description(&body);
+    let items = parse_docs_items(&body);
+    let items_display = format_docs_items(&items, 10);
+
+    let mut summary = format!("  📦 {url}\n");
+    if let Some(desc) = description {
+        summary.push_str(&format!("  📝 {desc}\n"));
     }
+    if !items_display.is_empty() {
+        summary.push_str(&format!("\n{items_display}"));
+    } else {
+        if !summary.contains("📝") {
+            summary.push_str("  Docs available at the URL above.");
+        }
+    }
+
+    (true, summary)
+}
+
+/// Fetch docs for a specific item within a crate (e.g., `/docs tokio task`).
+/// Constructs the URL as `https://docs.rs/<crate>/latest/<crate_mod>/<item>/`.
+/// Returns (found, summary_text).
+fn fetch_docs_item(crate_name: &str, item: &str) -> (bool, String) {
+    if !is_valid_crate_name(crate_name) {
+        return (false, format!("Invalid crate name: '{crate_name}'"));
+    }
+    if item.is_empty() {
+        return fetch_docs_summary(crate_name);
+    }
+
+    let crate_mod = crate_name.replace('-', "_");
+    // Try as a module first: <crate>/<item>/
+    let url = format!("https://docs.rs/{crate_name}/latest/{crate_mod}/{item}/");
+
+    let body = match fetch_docs_html(&url) {
+        Ok(body) => body,
+        Err(_) => {
+            // Item not found at that path
+            return (
+                false,
+                format!("Item '{item}' not found in crate '{crate_name}' on docs.rs"),
+            );
+        }
+    };
+
+    let description = extract_meta_description(&body);
+    let items = parse_docs_items(&body);
+    let items_display = format_docs_items(&items, 10);
+
+    let mut summary = format!("  📦 {url}\n");
+    if let Some(desc) = description {
+        summary.push_str(&format!("  📝 {desc}\n"));
+    }
+    if !items_display.is_empty() {
+        summary.push_str(&format!("\n{items_display}"));
+    } else if !summary.contains("📝") {
+        summary.push_str("  Docs available at the URL above.");
+    }
+
+    (true, summary)
 }
 
 /// Extract the content of `<meta name="description" content="...">` from HTML.
@@ -3053,5 +3246,216 @@ mod tests {
         let html = r#"<meta name="description" content="">"#;
         let desc = extract_meta_description(html);
         assert!(desc.is_none());
+    }
+
+    #[test]
+    fn test_parse_docs_items_modules() {
+        let html = r#"
+            <a class="mod" href="fs/index.html" title="mod tokio::fs">fs</a>
+            <a class="mod" href="io/index.html" title="mod tokio::io">io</a>
+            <a class="mod" href="sync/index.html" title="mod tokio::sync">sync</a>
+        "#;
+        let items = parse_docs_items(html);
+        assert_eq!(items.len(), 3);
+        assert_eq!(
+            items[0],
+            DocsItem {
+                kind: "mod".into(),
+                name: "fs".into()
+            }
+        );
+        assert_eq!(
+            items[1],
+            DocsItem {
+                kind: "mod".into(),
+                name: "io".into()
+            }
+        );
+        assert_eq!(
+            items[2],
+            DocsItem {
+                kind: "mod".into(),
+                name: "sync".into()
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_docs_items_mixed_kinds() {
+        let html = r#"
+            <a class="mod" href="de/index.html" title="mod serde::de">de</a>
+            <a class="mod" href="ser/index.html" title="mod serde::ser">ser</a>
+            <a class="trait" href="trait.Serialize.html" title="trait serde::Serialize">Serialize</a>
+            <a class="trait" href="trait.Deserialize.html" title="trait serde::Deserialize">Deserialize</a>
+            <a class="macro" href="macro.forward.html" title="macro serde::forward_to_deserialize_any">forward_</a>
+        "#;
+        let items = parse_docs_items(html);
+        assert_eq!(items.len(), 5);
+
+        let mods: Vec<&DocsItem> = items.iter().filter(|i| i.kind == "mod").collect();
+        assert_eq!(mods.len(), 2);
+        assert_eq!(mods[0].name, "de");
+        assert_eq!(mods[1].name, "ser");
+
+        let traits: Vec<&DocsItem> = items.iter().filter(|i| i.kind == "trait").collect();
+        assert_eq!(traits.len(), 2);
+        assert_eq!(traits[0].name, "Serialize");
+        assert_eq!(traits[1].name, "Deserialize");
+
+        // Macro name should come from title (full name), not truncated display text
+        let macros: Vec<&DocsItem> = items.iter().filter(|i| i.kind == "macro").collect();
+        assert_eq!(macros.len(), 1);
+        assert_eq!(macros[0].name, "forward_to_deserialize_any");
+    }
+
+    #[test]
+    fn test_parse_docs_items_structs_enums_fns() {
+        let html = r#"
+            <a class="struct" href="struct.Runtime.html" title="struct tokio::runtime::Runtime">Runtime</a>
+            <a class="enum" href="enum.Error.html" title="enum tokio::io::Error">Error</a>
+            <a class="fn" href="fn.spawn.html" title="fn tokio::task::spawn">spawn</a>
+            <a class="type" href="type.Result.html" title="type tokio::io::Result">Result</a>
+        "#;
+        let items = parse_docs_items(html);
+        assert_eq!(items.len(), 4);
+        assert_eq!(items[0].kind, "struct");
+        assert_eq!(items[0].name, "Runtime");
+        assert_eq!(items[1].kind, "enum");
+        assert_eq!(items[1].name, "Error");
+        assert_eq!(items[2].kind, "fn");
+        assert_eq!(items[2].name, "spawn");
+        assert_eq!(items[3].kind, "type");
+        assert_eq!(items[3].name, "Result");
+    }
+
+    #[test]
+    fn test_parse_docs_items_empty_html() {
+        let items = parse_docs_items("");
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_parse_docs_items_no_matching_classes() {
+        let html = r#"<a class="other" href="foo.html">bar</a>"#;
+        let items = parse_docs_items(html);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_parse_docs_items_deduplication() {
+        // Same item appearing twice should only be counted once
+        let html = r#"
+            <a class="trait" href="trait.Serialize.html" title="trait serde::Serialize">Serialize</a>
+            <a class="trait" href="trait.Serialize.html" title="trait serde::Serialize">Serialize</a>
+        "#;
+        let items = parse_docs_items(html);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "Serialize");
+    }
+
+    #[test]
+    fn test_format_docs_items_basic() {
+        let items = vec![
+            DocsItem {
+                kind: "mod".into(),
+                name: "fs".into(),
+            },
+            DocsItem {
+                kind: "mod".into(),
+                name: "io".into(),
+            },
+            DocsItem {
+                kind: "trait".into(),
+                name: "Serialize".into(),
+            },
+        ];
+        let output = format_docs_items(&items, 10);
+        assert!(output.contains("Modules: fs, io"));
+        assert!(output.contains("Traits: Serialize"));
+    }
+
+    #[test]
+    fn test_format_docs_items_capped_with_more() {
+        let items: Vec<DocsItem> = (0..15)
+            .map(|i| DocsItem {
+                kind: "struct".into(),
+                name: format!("S{i}"),
+            })
+            .collect();
+        let output = format_docs_items(&items, 10);
+        assert!(output.contains("Structs:"), "Should have Structs label");
+        assert!(
+            output.contains("+5 more"),
+            "Should show +5 more, got: {output}"
+        );
+        // Should contain the first 10
+        assert!(output.contains("S0"));
+        assert!(output.contains("S9"));
+        // Should NOT contain S10 in the list directly (it's in +N more)
+    }
+
+    #[test]
+    fn test_format_docs_items_empty() {
+        let output = format_docs_items(&[], 10);
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn test_format_docs_items_ordering() {
+        // Items should be grouped in order: mod, struct, enum, trait, fn, type, macro
+        let items = vec![
+            DocsItem {
+                kind: "macro".into(),
+                name: "my_macro".into(),
+            },
+            DocsItem {
+                kind: "mod".into(),
+                name: "mymod".into(),
+            },
+            DocsItem {
+                kind: "trait".into(),
+                name: "MyTrait".into(),
+            },
+            DocsItem {
+                kind: "struct".into(),
+                name: "MyStruct".into(),
+            },
+        ];
+        let output = format_docs_items(&items, 10);
+        let mod_pos = output.find("Modules:").unwrap();
+        let struct_pos = output.find("Structs:").unwrap();
+        let trait_pos = output.find("Traits:").unwrap();
+        let macro_pos = output.find("Macros:").unwrap();
+        assert!(mod_pos < struct_pos, "Modules should come before Structs");
+        assert!(struct_pos < trait_pos, "Structs should come before Traits");
+        assert!(trait_pos < macro_pos, "Traits should come before Macros");
+    }
+
+    #[test]
+    fn test_is_valid_crate_name() {
+        assert!(is_valid_crate_name("serde"));
+        assert!(is_valid_crate_name("tokio"));
+        assert!(is_valid_crate_name("my-crate"));
+        assert!(is_valid_crate_name("my_crate"));
+        assert!(is_valid_crate_name("serde-json"));
+        assert!(!is_valid_crate_name(""));
+        assert!(!is_valid_crate_name("not a valid/crate"));
+        assert!(!is_valid_crate_name("some@crate!"));
+    }
+
+    #[test]
+    fn test_fetch_docs_item_invalid_crate() {
+        let (found, msg) = fetch_docs_item("bad crate!", "item");
+        assert!(!found);
+        assert!(msg.contains("Invalid crate name"));
+    }
+
+    #[test]
+    fn test_fetch_docs_item_empty_item_delegates_to_summary() {
+        // When item is empty, it should delegate to fetch_docs_summary
+        let (_, msg) = fetch_docs_item("totally_nonexistent_crate_xyz_123", "");
+        // Should go through fetch_docs_summary path, not the item path
+        // The result depends on network but should not say "Invalid crate name"
+        assert!(!msg.contains("Invalid crate name"));
     }
 }

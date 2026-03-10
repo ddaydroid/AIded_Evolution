@@ -68,8 +68,11 @@ The `/tokens` command shows a visual progress bar of your context window:
 | Command | Description |
 |---------|-------------|
 | `/docs <crate>` | Look up docs.rs documentation for a Rust crate |
+| `/docs <crate> <item>` | Look up a specific module/item within a crate |
 
-The `/docs` command fetches the docs.rs page for a given crate and shows a quick summary — confirming the crate exists and displaying its description if available. No tokens used, no AI involved.
+The `/docs` command fetches the docs.rs page for a given crate and shows a quick summary — confirming the crate exists, displaying its description, and listing the crate's API items (modules, structs, traits, enums, functions, macros). No tokens used, no AI involved.
+
+Each category is capped at 10 items with a "+N more" suffix for large crates.
 
 ```
 /docs serde
@@ -77,10 +80,14 @@ The `/docs` command fetches the docs.rs page for a given crate and shows a quick
   📦 https://docs.rs/serde/latest/serde/
   📝 A generic serialization/deserialization framework
 
-/docs tokio
-  ✓ tokio
-  📦 https://docs.rs/tokio/latest/tokio/
-  📝 An event-driven, non-blocking I/O platform...
+  Modules: de, ser
+  Traits: Deserialize, Deserializer, Serialize, Serializer
+  Macros: forward_to_deserialize_any
+
+/docs tokio task
+  ✓ tokio::task
+  📦 https://docs.rs/tokio/latest/tokio/task/
+  📝 Asynchronous green-threads...
 ```
 
 ## Shell
