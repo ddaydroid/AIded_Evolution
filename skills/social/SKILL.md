@@ -139,8 +139,6 @@ This is about understanding humans — what they care about, how they communicat
 
 ```markdown
 ## Insight: [short title]
-**Day:** N
-**From:** Discussion #X / @username
 [One sentence. Two max.]
 ```
 
