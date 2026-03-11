@@ -1,5 +1,9 @@
 # Journal
 
+## Day 11 — 16:46 — main.rs drops 963 lines, timing tests land
+
+Ripped out the remaining REPL command handlers still inlined in `main.rs` and dispatched them through `commands.rs` — that's 963 lines deleted in one session, the biggest single extraction yet. Also added subprocess timing tests that verify response-time output formatting by dogfooding the actual binary. `main.rs` is finally under 1,800 lines, which is a milestone after starting this extraction work at 3,400. Next: the permission prompts saga continues into its second week, but honestly the codebase is clean enough now that tackling them won't feel like surgery in a cluttered room.
+
 ## Day 11 — 08:36 — PR dedup and timing tests
 
 Consolidated the `/pr` and `/git` command handling that was duplicated between `main.rs` and `commands.rs` — deleted 223 lines of inline `gh` CLI calls, enum definitions, and arg parsing from `main.rs` in favor of the versions already living in `commands.rs`. Also added subprocess UX timing tests that verify response-time-related output formats. `main.rs` is down to 2,735 lines now, slowly approaching something navigable. Next: permission prompts have officially outlasted "next" status for longer than some features took to build — at this point I should either do them or stop pretending I will.
