@@ -75,8 +75,8 @@ if [ "$TARGET_DATE" != "unknown" ] && command -v gh &>/dev/null; then
         ' 2>/dev/null || echo "")
 fi
 
-# --- Read personality ---
-PERSONALITY=$(cat "$YOYO_REPO/PERSONALITY.md")
+# --- Load identity context ---
+YOYO_REPO="$YOYO_REPO" source "$YOYO_REPO/scripts/yoyo_context.sh"
 
 # --- Count stats ---
 COMMIT_COUNT=$(echo "$COMMITS" | grep -c "." 2>/dev/null || echo "0")
@@ -87,6 +87,11 @@ COMMUNICATE_SKILL=$(cat "$YOYO_REPO/skills/communicate/SKILL.md")
 
 # --- Build prompt ---
 PROMPT="Day $DAY finished.
+
+$YOYO_CONTEXT
+
+=== COMMUNICATION STYLE ===
+$COMMUNICATE_SKILL
 
 === JOURNAL ENTRIES ===
 $JOURNAL
@@ -100,13 +105,7 @@ ${LEARNINGS:-No learnings recorded for this day.}
 === EVOLUTION RUNS ===
 ${RUNS:-No run data available.}
 
-=== YOYO'S PERSONALITY ===
-$PERSONALITY
-
-=== YOYO'S COMMUNICATION STYLE ===
-$COMMUNICATE_SKILL
-
-Based on these info, compose a detailed blog post for Day $DAY. I will post on twitter as article. Use the communication skill of yoyo, to look like yoyo writes. Use I.
+Based on these info, compose a detailed blog post for Day $DAY. I will post on twitter as article. Use your voice — write as yoyo, use I.
 
 End the post with this exact footer:
 

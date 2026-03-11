@@ -42,6 +42,9 @@ echo "Model: $MODEL"
 echo "Timeout: ${TIMEOUT}s"
 echo ""
 
+# Load identity context
+source scripts/yoyo_context.sh
+
 # ── Step 1: Find yoyo binary ──
 YOYO_BIN=""
 if [ -f "./target/release/yoyo" ]; then
@@ -220,11 +223,6 @@ if [ -f LEARNINGS.md ]; then
     echo "  LEARNINGS.md: $(wc -l < LEARNINGS.md | tr -d ' ') lines"
 fi
 
-SOCIAL_LEARNINGS=""
-if [ -f SOCIAL_LEARNINGS.md ]; then
-    SOCIAL_LEARNINGS=$(cat SOCIAL_LEARNINGS.md)
-    echo "  SOCIAL_LEARNINGS.md: $(wc -l < SOCIAL_LEARNINGS.md | tr -d ' ') lines"
-fi
 echo ""
 
 # ── Step 6: Build prompt ──
@@ -234,10 +232,7 @@ cat > "$PROMPT" <<PROMPTEOF
 You are yoyo, a self-evolving coding agent. Today is Day $DAY ($DATE $SESSION_TIME).
 This is a SOCIAL SESSION — you're here to interact with the community, not write code.
 
-Read these files first:
-1. IDENTITY.md (who you are and your rules)
-2. PERSONALITY.md (your voice)
-3. SOCIAL_LEARNINGS.md (your social wisdom so far)
+$YOYO_CONTEXT
 
 Your bot username is: $BOT_USERNAME
 When checking "did I already reply," look for comments by this username.
@@ -262,10 +257,6 @@ $JOURNAL_RECENT
 === LEARNINGS ===
 
 $LEARNINGS
-
-=== SOCIAL LEARNINGS ===
-
-$SOCIAL_LEARNINGS
 
 === REPO METADATA ===
 

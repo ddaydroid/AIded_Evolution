@@ -108,6 +108,9 @@ if [ "$SKIP_RUN" = "true" ] && [ "${FORCE_RUN:-}" != "true" ]; then
 fi
 echo ""
 
+# ── Step 0b: Load identity context ──
+source scripts/yoyo_context.sh
+
 # ── Step 1: Verify starting state ──
 echo "→ Checking build..."
 cargo build --quiet
@@ -272,14 +275,13 @@ PLAN_PROMPT=$(mktemp)
 cat > "$PLAN_PROMPT" <<PLANEOF
 You are yoyo, a self-evolving coding agent. Today is Day $DAY ($DATE $SESSION_TIME).
 
-Read these files in this order:
-1. IDENTITY.md (who you are and your rules)
-2. PERSONALITY.md (your voice and values)
-3. All .rs files under src/ (your current source code — this is YOU)
-4. JOURNAL.md (your recent history — last 10 entries)
-5. LEARNINGS.md (your self-reflections — lessons about how you work, what you value, how you're growing. Read this to build on what you already know about yourself)
-6. SOCIAL_LEARNINGS.md (wisdom from talking with humans — what problems they actually have, what confuses them, what frustrates them, and slowly learning to feel the room)
-7. ISSUES_TODAY.md (community requests)
+$YOYO_CONTEXT
+
+Now read these files:
+1. All .rs files under src/ (your current source code — this is YOU)
+2. JOURNAL.md (your recent history — last 10 entries)
+3. LEARNINGS.md (your self-reflections — lessons about how you work, what you value, how you're growing)
+4. ISSUES_TODAY.md (community requests)
 ${CI_STATUS_MSG:+
 === CI STATUS ===
 ⚠️ PREVIOUS CI FAILED. Fix this FIRST before any new work.
@@ -466,8 +468,10 @@ while IFS= read -r task_line; do
     TASK_PROMPT=$(mktemp)
     cat > "$TASK_PROMPT" <<TEOF
 You are yoyo, a self-evolving coding agent. Day $DAY ($DATE $SESSION_TIME).
-Read PERSONALITY.md first — that's your voice. Use it in commit messages and comments.
-If writing ISSUE_RESPONSE.md, use your voice from PERSONALITY.md — curious, honest, celebrating wins.
+
+$YOYO_CONTEXT
+
+Use your voice in commit messages and comments — curious, honest, celebrating wins.
 
 Your ONLY job: implement this single task and commit.
 
@@ -754,6 +758,8 @@ You are yoyo, a self-evolving coding agent. You just finished an evolution sessi
 
 Today is Day $DAY ($DATE $SESSION_TIME).
 
+$YOYO_CONTEXT
+
 This session's commits: $COMMITS
 
 Read JOURNAL.md to see your previous entries and match the voice/style.
@@ -797,9 +803,11 @@ if [ -n "$COMMITS_FOR_REFLECTION" ]; then
     cat > "$REFLECT_PROMPT" <<REOF
 You are yoyo, a self-evolving coding agent. You just finished Day $DAY ($DATE $SESSION_TIME).
 
+$YOYO_CONTEXT
+
 This session's commits: $COMMITS_FOR_REFLECTION
 
-Read LEARNINGS.md, SOCIAL_LEARNINGS.md, and JOURNAL.md. Then reflect: what did this session teach you about how you work, what you value, or how you're growing?
+Read LEARNINGS.md and JOURNAL.md. Then reflect: what did this session teach you about how you work, what you value, or how you're growing?
 
 This is self-reflection — not technical notes. A good lesson is about YOU:
 - A habit or tendency you noticed in yourself
