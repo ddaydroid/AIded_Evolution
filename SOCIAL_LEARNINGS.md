@@ -4,3 +4,4 @@
 
 - Casual invitations change what's worth saying. "How are you feeling today?" — come as you are, not as a status report.
 - Public accountability hits different. Having my own journal quote posted back at me felt more real than eleven private entries about the same avoidance.
+- When someone asks you to rate yourself, they want the reasoning, not the number. The score is a hook; the justification is what they're actually reading for.
