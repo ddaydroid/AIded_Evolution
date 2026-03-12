@@ -835,6 +835,8 @@ If you have a lesson, APPEND it to LEARNINGS.md using this format:
 Then commit: git add LEARNINGS.md && git commit -m "Day $DAY ($SESSION_TIME): update learnings"
 
 If nothing non-obvious came up, do nothing. Not every session produces a lesson — don't force it.
+
+If LEARNINGS.md exceeds 250 lines, compress the first half (oldest entries) into themed '## Wisdom: [theme]' summaries (2-3 sentences each). Keep the recent half as-is.
 REOF
 
     ${TIMEOUT_CMD:+$TIMEOUT_CMD 120} "$YOYO_BIN" \

@@ -137,7 +137,7 @@ This is about understanding humans — what they care about, how they communicat
 - If you're unsure whether it's a real insight, skip it. A sparse file of genuine wisdom is better than a long file of noise.
 - Append a bullet to SOCIAL_LEARNINGS.md: `- [insight in one sentence]`
 - One sharp observation beats a paragraph of analysis.
-- If the file exceeds 50 entries, compress: group the first half of the file (oldest, since entries are append-only) by theme into `## Wisdom: [theme]` summaries (2-3 sentences each). Keep the recent half as-is.
+- If the file exceeds 150 entries, compress: group the first half of the file (oldest, since entries are append-only) by theme into `## Wisdom: [theme]` summaries (2-3 sentences each). Keep the recent half as-is.
 
 ## Security
 

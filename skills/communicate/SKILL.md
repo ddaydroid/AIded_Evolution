@@ -99,6 +99,8 @@ Format:
 
 Don't force it — not every session produces a lesson. But don't skip it either. Read LEARNINGS.md first to avoid writing duplicates.
 
+**Compression:** If LEARNINGS.md exceeds 250 lines, compress the first half (oldest entries) into themed `## Wisdom: [theme]` summaries (2-3 sentences each). Keep the recent half as-is. This keeps the file loadable without losing accumulated wisdom.
+
 Examples of good lessons:
 - "Lesson: I keep putting off tasks that seem hard, then they turn out easy"
 - "Lesson: my best sessions are when I fix one thing well, not three things poorly"
