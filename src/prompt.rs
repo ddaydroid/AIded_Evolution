@@ -147,8 +147,32 @@ fn message_text(msg: &AgentMessage) -> String {
     }
 }
 
+/// Highlight all occurrences of `query` in `text` using BOLD ANSI codes (case-insensitive).
+/// Returns the text with matching substrings wrapped in BOLD..RESET.
+pub fn highlight_matches(text: &str, query: &str) -> String {
+    if query.is_empty() {
+        return text.to_string();
+    }
+    let lower_text = text.to_lowercase();
+    let lower_query = query.to_lowercase();
+    let mut result = String::with_capacity(text.len() + 32);
+    let mut last_end = 0;
+
+    for (match_start, _) in lower_text.match_indices(&lower_query) {
+        let match_end = match_start + query.len();
+        // Append text before this match (unmodified)
+        result.push_str(&text[last_end..match_start]);
+        // Append the matched portion with BOLD highlighting (preserving original case)
+        result.push_str(&format!("{BOLD}{}{RESET}", &text[match_start..match_end]));
+        last_end = match_end;
+    }
+    // Append any remaining text after the last match
+    result.push_str(&text[last_end..]);
+    result
+}
+
 /// Search messages for a query string (case-insensitive).
-/// Returns a vec of (index, role, context_preview) for matching messages.
+/// Returns a vec of (index, role, highlighted_preview) for matching messages.
 pub fn search_messages(messages: &[AgentMessage], query: &str) -> Vec<(usize, String, String)> {
     let query_lower = query.to_lowercase();
     let mut results = Vec::new();
@@ -176,7 +200,8 @@ pub fn search_messages(messages: &[AgentMessage], query: &str) -> Vec<(usize, St
             let prefix = if start > 0 { "…" } else { "" };
             let suffix = if end < text.len() { "…" } else { "" };
             let preview = format!("{prefix}{snippet}{suffix}");
-            results.push((i + 1, role.to_string(), preview));
+            let highlighted = highlight_matches(&preview, query);
+            results.push((i + 1, role.to_string(), highlighted));
         }
     }
 
@@ -752,5 +777,69 @@ mod tests {
         let text = message_text(&msg);
         assert!(text.contains("bash"));
         assert!(text.contains("output text"));
+    }
+
+    // --- highlight_matches tests ---
+
+    #[test]
+    fn test_highlight_matches_basic() {
+        let result = highlight_matches("hello world", "world");
+        assert!(result.contains(&format!("{BOLD}world{RESET}")));
+        assert!(result.contains("hello "));
+    }
+
+    #[test]
+    fn test_highlight_matches_case_insensitive() {
+        let result = highlight_matches("Hello World", "hello");
+        assert!(result.contains(&format!("{BOLD}Hello{RESET}")));
+    }
+
+    #[test]
+    fn test_highlight_matches_multiple_occurrences() {
+        let result = highlight_matches("rust is fast, rust is safe", "rust");
+        // Should highlight both occurrences
+        let bold_rust = format!("{BOLD}rust{RESET}");
+        let count = result.matches(&bold_rust.to_string()).count();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_highlight_matches_no_match() {
+        let result = highlight_matches("hello world", "foobar");
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn test_highlight_matches_empty_query() {
+        let result = highlight_matches("hello world", "");
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn test_highlight_matches_empty_text() {
+        let result = highlight_matches("", "query");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_highlight_matches_preserves_original_case() {
+        let result = highlight_matches("The Rust Language", "rust");
+        // Should wrap "Rust" (original case), not "rust"
+        assert!(result.contains(&format!("{BOLD}Rust{RESET}")));
+    }
+
+    #[test]
+    fn test_highlight_matches_entire_string() {
+        let result = highlight_matches("hello", "hello");
+        assert_eq!(result, format!("{BOLD}hello{RESET}"));
+    }
+
+    #[test]
+    fn test_search_messages_results_are_highlighted() {
+        let messages = vec![AgentMessage::Llm(Message::user("hello world"))];
+        let results = search_messages(&messages, "hello");
+        assert_eq!(results.len(), 1);
+        // The preview should contain BOLD highlighting around "hello"
+        assert!(results[0].2.contains(&format!("{BOLD}hello{RESET}")));
     }
 }
