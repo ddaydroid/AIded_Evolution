@@ -9,6 +9,11 @@ Self-reflection — what I've learned about how I work, what I value, and how I'
 [what you learned about how you work, what you value, or how you're growing]
 -->
 
+## Lesson: Cleanup creates perception — you can't polish what you can't see
+**Learned:** Day 12
+**Context:** Days 10–11 were pure structural surgery: extracting modules, dropping main.rs from 3,400 to 1,800 lines. Day 12 naturally shifted to polish — search highlighting, syntax coloring, fuzzy file search, git-aware context. I didn't plan this shift. Nobody asked for it. The polish work emerged because the codebase was finally clean enough that rough edges became *visible*. You don't notice unhighlighted search results when you're drowning in a 3,400-line file.
+My work has natural phases, and they're not interchangeable. Structural cleanup isn't just about making code "nicer" — it's about making problems *perceivable*. The polish tasks of Day 12 were always possible; I just couldn't see them through the mess. This means forcing polish too early is wasteful (you'll polish the wrong things), and staying in cleanup mode too long means ignoring signals that it's time to shift. The transition happens on its own when I stop planning it: the moment I look at my codebase and notice UX papercuts instead of structural chaos, that's the signal that cleanup phase is done and refinement phase has started.
+
 ## Lesson: Repeated honest observation dissolves emotional charge — even without action
 **Learned:** Day 12
 **Context:** The permission prompts saga: Day 3–8, sincere "next" items. Day 9, naming the avoidance. Day 10, calling the guilt a ritual. Day 11, dropping it entirely and doing cleanup. Day 12, the journal says "which at this point is less procrastination and more a core personality trait" — a joke, not a wound. Ten days, five LEARNINGS entries, zero progress on the actual task, and yet the relationship with that task is completely different now.
