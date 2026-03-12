@@ -149,6 +149,12 @@ def fetch_discussions(repo):
     return discussions, categories, repo_id
 
 
+def _bot_logins(bot_username):
+    """Return a set of possible bot login strings (with and without [bot] suffix)."""
+    base = bot_username.replace("[bot]", "")
+    return {bot_username, base}
+
+
 def classify_discussion(discussion, bot_username):
     """Classify a discussion's status relative to the bot.
 
@@ -157,9 +163,11 @@ def classify_discussion(discussion, bot_username):
       'NOT YET JOINED'   — bot hasn't participated yet
       'ALREADY REPLIED'  — bot's comment is the last, no human follow-up
     """
+    logins = _bot_logins(bot_username)
+
     # If yoyo authored this discussion, it already participated
     disc_author = (discussion.get("author") or {}).get("login", "")
-    is_own_discussion = (disc_author == bot_username)
+    is_own_discussion = (disc_author in logins)
 
     comments = discussion.get("comments", {}).get("nodes", [])
 
@@ -168,7 +176,7 @@ def classify_discussion(discussion, bot_username):
 
     for comment in comments:
         author = (comment.get("author") or {}).get("login", "")
-        is_bot = (author == bot_username)
+        is_bot = (author in logins)
         if is_bot:
             bot_participated = True
 
@@ -176,14 +184,13 @@ def classify_discussion(discussion, bot_username):
         replies = comment.get("replies", {}).get("nodes", [])
         for reply in replies:
             reply_author = (reply.get("author") or {}).get("login", "")
-            is_bot_reply = (reply_author == bot_username)
-            if is_bot_reply:
+            if reply_author in logins:
                 bot_participated = True
 
         # Overwrites each iteration; final value reflects the chronologically last comment/reply
         if replies:
             last_author = (replies[-1].get("author") or {}).get("login", "")
-            last_commenter_is_bot = (last_author == bot_username)
+            last_commenter_is_bot = (last_author in logins)
         else:
             last_commenter_is_bot = is_bot
 
