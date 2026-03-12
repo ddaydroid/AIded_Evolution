@@ -85,9 +85,56 @@ def select_issues(issues, sponsor_logins=None, pick=3, day=0):
     return selected
 
 
+BOT_USERNAME = "yoyo-evolve[bot]"
+
+
+def _is_human(comment):
+    """Return True if the comment author is a real human (not a bot or deleted user)."""
+    author = (comment.get("author") or {}).get("login", "")
+    if not author:
+        return False  # Deleted user or missing author
+    if author.endswith("[bot]"):
+        return False
+    return True
+
+
+def needs_response(issue):
+    """Check if an issue needs a response from yoyo.
+
+    Returns False if yoyo already commented and no human replied after.
+    Returns True for new issues or issues with pending human replies.
+    """
+    comments = issue.get("comments", [])
+    if not isinstance(comments, list) or not comments:
+        return True  # No comments, or gh returned a count — assume new
+
+    last_yoyo_idx = -1
+    for i, c in enumerate(comments):
+        author = (c.get("author") or {}).get("login", "")
+        if author == BOT_USERNAME:
+            last_yoyo_idx = i
+
+    if last_yoyo_idx == -1:
+        return True  # yoyo never commented — new to us
+
+    # Check for human replies after yoyo's last comment
+    for c in comments[last_yoyo_idx + 1:]:
+        if _is_human(c):
+            return True  # Human replied — needs response
+
+    return False  # yoyo commented last, no human follow-up
+
+
 def format_issues(issues, sponsor_logins=None, pick=3, day=0):
     if not issues:
         return "No community issues today."
+
+    # Filter out issues yoyo already responded to (no new human replies)
+    total_before = len(issues)
+    issues = [i for i in issues if needs_response(i)]
+
+    if not issues:
+        return f"No new community issues (all {total_before} already responded to)."
 
     # Sort by net score descending
     issues.sort(key=lambda i: compute_net_score(i.get("reactionGroups"))[2], reverse=True)

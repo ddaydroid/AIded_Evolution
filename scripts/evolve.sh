@@ -152,10 +152,16 @@ if command -v gh &>/dev/null; then
         --state open \
         --label "agent-input" \
         --limit 15 \
-        --json number,title,body,labels,reactionGroups,author \
+        --json number,title,body,labels,reactionGroups,author,comments \
         > /tmp/issues_raw.json 2>/dev/null || true
 
-    python3 scripts/format_issues.py /tmp/issues_raw.json "$SPONSORS_FILE" "$DAY" > "$ISSUES_FILE" 2>/dev/null || echo "No issues found." > "$ISSUES_FILE"
+    FORMAT_STDERR=$(mktemp)
+    python3 scripts/format_issues.py /tmp/issues_raw.json "$SPONSORS_FILE" "$DAY" > "$ISSUES_FILE" 2>"$FORMAT_STDERR" || echo "No issues found." > "$ISSUES_FILE"
+    if [ -s "$FORMAT_STDERR" ]; then
+        echo "  format_issues.py stderr:"
+        cat "$FORMAT_STDERR" | sed 's/^/    /'
+    fi
+    rm -f "$FORMAT_STDERR"
     echo "  $(grep -c '^### Issue' "$ISSUES_FILE" 2>/dev/null || echo 0) issues loaded."
 else
     echo "  gh CLI not available. Skipping issue fetch."
