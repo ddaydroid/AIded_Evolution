@@ -46,7 +46,7 @@ gh api graphql -f query='
 '
 ```
 
-**Reply to a specific comment:**
+**Reply in a thread (under a specific comment):**
 ```bash
 gh api graphql -f query='
   mutation {
@@ -60,6 +60,12 @@ gh api graphql -f query='
   }
 '
 ```
+
+**Threading rules:**
+- `replyToId` must be a **top-level comment ID** (labeled "comment ID" in the formatted data), never a nested reply ID.
+- GitHub Discussions only support one level of nesting. All replies in a thread share the same parent comment ID.
+- When someone replies to your comment, reply back in the SAME thread using your original comment's ID as `replyToId`.
+- **Never post a new top-level comment when you should be replying in an existing thread.** If someone asked you a question in a thread, answer in that thread.
 
 **Important:** Replace `DISCUSSION_NODE_ID` and `COMMENT_NODE_ID` with the actual node IDs from the formatted discussion data. Use `-f` variable passing for the body when it contains special characters:
 ```bash
