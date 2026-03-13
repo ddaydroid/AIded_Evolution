@@ -497,6 +497,15 @@ pub async fn run_repl(
                 }
                 continue;
             }
+            s if s == "/review" || s.starts_with("/review ") => {
+                if let Some(review_prompt) =
+                    commands::handle_review(input, agent, &mut session_total, &agent_config.model)
+                        .await
+                {
+                    last_input = Some(review_prompt);
+                }
+                continue;
+            }
             s if s.starts_with('/') && is_unknown_command(s) => {
                 let cmd = s.split_whitespace().next().unwrap_or(s);
                 eprintln!("{RED}  unknown command: {cmd}{RESET}");

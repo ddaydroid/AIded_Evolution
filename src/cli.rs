@@ -257,6 +257,7 @@ pub fn print_help() {
     println!("  /load [path]      Load session from file");
     println!("  /model <name>     Switch model mid-session");
     println!("  /retry            Re-send the last user input");
+    println!("  /review [path]    AI code review: staged changes (default) or a specific file");
     println!("  /run <cmd>        Run a shell command directly (no AI, no tokens)");
     println!("  /save [path]      Save session to file");
     println!("  /spawn <task>     Spawn a subagent with fresh context to handle a task");

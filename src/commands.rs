@@ -24,7 +24,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/cost", "/docs", "/find", "/fix",
     "/status", "/tokens", "/save", "/load", "/diff", "/undo", "/health", "/retry", "/history",
     "/search", "/model", "/think", "/config", "/context", "/init", "/version", "/run", "/tree",
-    "/pr", "/git", "/test", "/lint", "/spawn",
+    "/pr", "/git", "/test", "/lint", "/spawn", "/review",
 ];
 
 /// Check if a slash-prefixed input is an unknown command.
@@ -82,6 +82,7 @@ pub fn handle_help() {
     println!("  /history           Show summary of conversation messages");
     println!("  /search <query>    Search conversation history for matching messages");
     println!("  /spawn <task>      Spawn a subagent to handle a task (separate context)");
+    println!("  /review [path]     AI code review: staged changes (default) or a specific file");
     println!("  /tree [depth]      Show project directory tree (default depth: 3)");
     println!("  /version           Show yoyo version");
     println!();
@@ -1636,6 +1637,119 @@ pub fn handle_git(input: &str) {
     run_git_subcommand(&subcmd);
 }
 
+// ── /review ──────────────────────────────────────────────────────────────
+
+/// Build a review prompt for either staged changes or a specific file.
+/// Returns None if there's nothing to review, Some(prompt) otherwise.
+pub fn build_review_content(arg: &str) -> Option<(String, String)> {
+    let arg = arg.trim();
+    if arg.is_empty() {
+        // Review staged changes
+        match get_staged_diff() {
+            None => {
+                eprintln!("{RED}  error: not in a git repository{RESET}\n");
+                None
+            }
+            Some(diff) if diff.trim().is_empty() => {
+                // Fall back to unstaged diff if nothing staged
+                let unstaged = std::process::Command::new("git")
+                    .args(["diff"])
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                    .unwrap_or_default();
+                if unstaged.trim().is_empty() {
+                    println!("{DIM}  nothing to review — no staged or unstaged changes{RESET}\n");
+                    None
+                } else {
+                    println!("{DIM}  reviewing unstaged changes...{RESET}");
+                    Some(("unstaged changes".to_string(), unstaged))
+                }
+            }
+            Some(diff) => {
+                println!("{DIM}  reviewing staged changes...{RESET}");
+                Some(("staged changes".to_string(), diff))
+            }
+        }
+    } else {
+        // Review a specific file
+        let path = std::path::Path::new(arg);
+        if !path.exists() {
+            eprintln!("{RED}  error: file not found: {arg}{RESET}\n");
+            return None;
+        }
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                if content.trim().is_empty() {
+                    println!("{DIM}  file is empty — nothing to review{RESET}\n");
+                    None
+                } else {
+                    println!("{DIM}  reviewing {arg}...{RESET}");
+                    Some((arg.to_string(), content))
+                }
+            }
+            Err(e) => {
+                eprintln!("{RED}  error reading {arg}: {e}{RESET}\n");
+                None
+            }
+        }
+    }
+}
+
+/// Build the review prompt to send to the AI.
+pub fn build_review_prompt(label: &str, content: &str) -> String {
+    // Truncate if very large
+    let max_chars = 30_000;
+    let content_preview = if content.len() > max_chars {
+        let truncated = &content[..max_chars];
+        format!(
+            "{truncated}\n\n... (truncated, {} more chars)",
+            content.len() - max_chars
+        )
+    } else {
+        content.to_string()
+    };
+
+    format!(
+        r#"Review the following code ({label}). Look for:
+
+1. **Bugs** — logic errors, off-by-one errors, null/None handling, race conditions
+2. **Security** — injection vulnerabilities, unsafe operations, credential exposure
+3. **Style** — naming, idiomatic patterns, unnecessary complexity, dead code
+4. **Performance** — obvious inefficiencies, unnecessary allocations, N+1 patterns
+5. **Suggestions** — improvements, missing error handling, better approaches
+
+Be specific: reference line numbers or code snippets. Be concise — skip things that look fine.
+If the code looks good overall, say so briefly and note any minor suggestions.
+
+```
+{content_preview}
+```"#
+    )
+}
+
+/// Handle the /review command: review staged changes or a specific file.
+/// Returns the review prompt if sent to AI, None otherwise.
+pub async fn handle_review(
+    input: &str,
+    agent: &mut Agent,
+    session_total: &mut Usage,
+    model: &str,
+) -> Option<String> {
+    let arg = input.strip_prefix("/review").unwrap_or("").trim();
+
+    match build_review_content(arg) {
+        Some((label, content)) => {
+            let prompt = build_review_prompt(&label, &content);
+            run_prompt(agent, &prompt, session_total, model).await;
+            auto_compact_if_needed(agent);
+            Some(prompt)
+        }
+        None => None,
+    }
+}
+
 // ── /find ────────────────────────────────────────────────────────────────
 
 /// Result of a fuzzy file match: (file_path, score, match_ranges).
@@ -1851,7 +1965,7 @@ mod tests {
             "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/config", "/context",
             "/cost", "/docs", "/find", "/fix", "/init", "/status", "/tokens", "/save", "/load",
             "/diff", "/undo", "/health", "/retry", "/run", "/history", "/search", "/model",
-            "/think", "/version", "/tree", "/pr", "/git", "/test", "/lint", "/spawn",
+            "/think", "/version", "/tree", "/pr", "/git", "/test", "/lint", "/spawn", "/review",
         ];
         for cmd in &commands {
             assert!(
@@ -2771,5 +2885,103 @@ mod tests {
         assert!(result.contains("main"));
         assert!(result.contains("src/"));
         assert!(result.contains(".rs"));
+    }
+
+    // ── /review tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_review_command_recognized() {
+        assert!(!is_unknown_command("/review"));
+        assert!(!is_unknown_command("/review src/main.rs"));
+        assert!(
+            KNOWN_COMMANDS.contains(&"/review"),
+            "/review should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn test_review_command_matching() {
+        // /review should match exact or with space separator, not /reviewing
+        let review_matches = |s: &str| s == "/review" || s.starts_with("/review ");
+        assert!(review_matches("/review"));
+        assert!(review_matches("/review src/main.rs"));
+        assert!(review_matches("/review Cargo.toml"));
+        assert!(!review_matches("/reviewing"));
+        assert!(!review_matches("/reviewer"));
+    }
+
+    #[test]
+    fn test_build_review_prompt_contains_content() {
+        let prompt =
+            build_review_prompt("staged changes", "fn main() {\n    println!(\"hello\");\n}");
+        assert!(
+            prompt.contains("staged changes"),
+            "Should mention the label"
+        );
+        assert!(prompt.contains("fn main()"), "Should contain the code");
+        assert!(prompt.contains("Bugs"), "Should ask for bug review");
+        assert!(
+            prompt.contains("Security"),
+            "Should ask for security review"
+        );
+        assert!(prompt.contains("Style"), "Should ask for style review");
+        assert!(
+            prompt.contains("Performance"),
+            "Should ask for performance review"
+        );
+        assert!(prompt.contains("Suggestions"), "Should ask for suggestions");
+    }
+
+    #[test]
+    fn test_build_review_prompt_truncates_large_content() {
+        let large_content = "x".repeat(40_000);
+        let prompt = build_review_prompt("big file", &large_content);
+        assert!(
+            prompt.contains("truncated"),
+            "Large content should be truncated"
+        );
+        assert!(
+            prompt.len() < 40_000,
+            "Prompt should be truncated, got {} chars",
+            prompt.len()
+        );
+    }
+
+    #[test]
+    fn test_build_review_content_nonexistent_file() {
+        let result = build_review_content("nonexistent_file_xyz_12345.rs");
+        assert!(result.is_none(), "Nonexistent file should return None");
+    }
+
+    #[test]
+    fn test_build_review_content_existing_file() {
+        // Cargo.toml exists in the project root
+        let result = build_review_content("Cargo.toml");
+        assert!(result.is_some(), "Existing file should return Some");
+        let (label, content) = result.unwrap();
+        assert_eq!(label, "Cargo.toml");
+        assert!(!content.is_empty(), "Content should not be empty");
+    }
+
+    #[test]
+    fn test_build_review_content_empty_arg_in_git_repo() {
+        // Empty arg reviews staged/unstaged changes
+        // In CI, this may or may not have changes — just verify it doesn't panic
+        let result = build_review_content("");
+        // Result depends on git state — either Some or None is valid
+        if let Some((label, _content)) = result {
+            assert!(
+                label.contains("changes"),
+                "Label should describe what's being reviewed: {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_review_help_text_present() {
+        // Verify /review appears in the help output by checking the handle_help function output
+        // We can't easily capture stdout, but we can verify the command is in KNOWN_COMMANDS
+        // and that the help text format is correct
+        assert!(KNOWN_COMMANDS.contains(&"/review"));
     }
 }

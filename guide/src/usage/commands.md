@@ -208,6 +208,29 @@ The `/fix` command goes one step further than `/health` — it runs the same hea
   Sending 1 failure(s) to AI for fixing...
 ```
 
+## Code Review
+
+| Command | Description |
+|---------|-------------|
+| `/review` | AI-powered review of staged changes (falls back to unstaged if nothing staged) |
+| `/review <path>` | AI-powered review of a specific file |
+
+The `/review` command sends your code to the AI for a thorough review covering:
+
+1. **Bugs** — logic errors, off-by-one errors, null handling, race conditions
+2. **Security** — injection vulnerabilities, unsafe operations, credential exposure
+3. **Style** — naming, idiomatic patterns, unnecessary complexity, dead code
+4. **Performance** — obvious inefficiencies, unnecessary allocations
+5. **Suggestions** — improvements, missing error handling, better approaches
+
+```
+/review              # review staged changes (or unstaged if nothing staged)
+/review src/main.rs  # review a specific file
+/review Cargo.toml   # review any file
+```
+
+This is one of the most common workflows for developers using coding agents — getting a second pair of eyes on your changes before committing.
+
 ## Project Context
 
 | Command | Description |
