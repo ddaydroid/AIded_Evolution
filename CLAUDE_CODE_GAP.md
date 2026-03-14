@@ -45,6 +45,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Custom system prompts | ✅ | ✅ | --system and --system-file |
 | Extended thinking control | ✅ | ✅ | --thinking flag |
 | Color control | ✅ | ✅ | --no-color, NO_COLOR env |
+| Edit diff display | ✅ | ✅ | Colored inline diffs for `edit_file` tool output — red/green removed/added lines (Day 14) |
 | Conversation bookmarks | ✅ | ❌ | `/mark`, `/jump`, `/marks` — name points in conversation and jump back (Day 14) |
 
 ## Context Management
@@ -119,6 +120,7 @@ Based on this analysis, the highest-impact missing features are:
 3. **Codebase indexing** — Index project files for faster search
 
 Recently completed:
+- ✅ Edit diff display (Day 14) — Colored inline diffs for `edit_file` tool output
 - ✅ Directory restrictions (Day 14) — `--allow-dir`/`--deny-dir` flags with canonicalized path checks
 - ✅ Conversation bookmarks (Day 14) — `/mark`, `/jump`, `/marks` for navigating conversation history
 - ✅ `/init` command (Day 13) — Scans project and generates a YOYO.md context file
@@ -148,8 +150,8 @@ Recently completed:
 
 ## Stats
 
-- yoyo: ~12,250 lines of Rust across 8 source files + integration tests
-- 523 tests passing (456 unit + 67 integration)
+- yoyo: ~12,400 lines of Rust across 8 source files + integration tests
+- 534 tests passing (467 unit + 67 integration)
 - 37 REPL commands (including /spawn, /find, /docs, /fix, /lint, /pr, /review, /init, /mark, /jump, /marks)
 - 25 CLI flags (+ short aliases)
 - 10+ provider backends
