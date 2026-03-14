@@ -36,7 +36,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Session save/load | ✅ | ✅ | /save, /load, --continue |
 | Git integration | ✅ | ✅ | Branch in prompt, /diff, /undo |
 | Readline / line editing | ✅ | ✅ | rustyline: arrow keys, history (~/.local/share/yoyo/history), Ctrl-A/E/K/W |
-| Tab completion | 🟡 | ✅ | Slash commands + file paths; no argument-aware completion yet |
+| Tab completion | ✅ | ✅ | Slash commands, file paths, and argument-aware completion (--model values, git subcommands, /pr subcommands) (Day 14) |
 | Fuzzy file search | ✅ | ✅ | `/find` with scoring, git-aware file listing, top-10 ranked results (Day 12) |
 | Syntax highlighting | ✅ | ✅ | Language-aware ANSI highlighting for Rust, Python, JS/TS, Go, Shell, C/C++, JSON, YAML, TOML |
 | Markdown rendering | ✅ | ✅ | Incremental ANSI: headers, bold, code blocks, inline code, syntax-highlighted code blocks |
@@ -75,7 +75,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Auto-detect project type | ✅ | ✅ | `detect_project_type` used by `/test`, `/lint`, `/health`, `/fix` (Rust, Node, Python, Go, Make) |
 | Project scaffolding | ✅ | ✅ | `/init` scans project and generates a YOYO.md context file (Day 13) |
 | Git-aware file selection | ✅ | ✅ | `get_recently_changed_files` appended to project context (Day 12) |
-| Codebase indexing | ❌ | ✅ | Claude Code indexes for faster search |
+| Codebase indexing | ✅ | ✅ | `/index` builds lightweight project index: file count, language breakdown, key files (Day 14) |
 
 ## Developer Workflow
 
@@ -116,10 +116,12 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 Based on this analysis, the highest-impact missing features are:
 
 1. **Parallel tool execution** — Speed up multi-tool workflows
-2. **Argument-aware tab completion** — Complete --model values, file args for /load, etc.
-3. **Codebase indexing** — Index project files for faster search
+2. **Richer subagent orchestration** — Better task decomposition and result aggregation for /spawn
+3. **Full graceful degradation** — Fallback behavior on partial tool failures
 
 Recently completed:
+- ✅ Argument-aware tab completion (Day 14) — `--model` values, git subcommands, `/pr` subcommands
+- ✅ Codebase indexing (Day 14) — `/index` builds lightweight project index with language breakdown
 - ✅ Edit diff display (Day 14) — Colored inline diffs for `edit_file` tool output
 - ✅ Directory restrictions (Day 14) — `--allow-dir`/`--deny-dir` flags with canonicalized path checks
 - ✅ Conversation bookmarks (Day 14) — `/mark`, `/jump`, `/marks` for navigating conversation history
@@ -150,9 +152,9 @@ Recently completed:
 
 ## Stats
 
-- yoyo: ~12,400 lines of Rust across 8 source files + integration tests
-- 534 tests passing (467 unit + 67 integration)
-- 37 REPL commands (including /spawn, /find, /docs, /fix, /lint, /pr, /review, /init, /mark, /jump, /marks)
+- yoyo: ~13,000 lines of Rust across 8 source files + integration tests
+- 562 tests passing (495 unit + 67 integration)
+- 38 REPL commands (including /spawn, /find, /docs, /fix, /lint, /pr, /review, /init, /mark, /jump, /marks, /index)
 - 25 CLI flags (+ short aliases)
 - 10+ provider backends
 - MCP server support
@@ -165,3 +167,5 @@ Recently completed:
 - Git-aware project context
 - Syntax highlighting for 8+ languages
 - Conversation bookmarks (/mark, /jump, /marks)
+- Codebase indexing (/index)
+- Argument-aware tab completion
