@@ -28,6 +28,79 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/pr", "/git", "/test", "/lint", "/spawn", "/review", "/mark", "/jump", "/marks",
 ];
 
+/// Well-known model names for `/model <Tab>` completion.
+pub const KNOWN_MODELS: &[&str] = &[
+    "claude-sonnet-4-20250514",
+    "claude-opus-4-20250514",
+    "claude-haiku-35-20241022",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "o3",
+    "o3-mini",
+    "o4-mini",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "deepseek-chat",
+    "deepseek-reasoner",
+];
+
+/// Thinking level names for `/think <Tab>` completion.
+pub const THINKING_LEVELS: &[&str] = &["off", "minimal", "low", "medium", "high"];
+
+/// Git subcommand names for `/git <Tab>` completion.
+pub const GIT_SUBCOMMANDS: &[&str] = &["status", "log", "add", "diff", "branch", "stash"];
+
+/// PR subcommand names for `/pr <Tab>` completion.
+pub const PR_SUBCOMMANDS: &[&str] = &["list", "view", "diff", "comment", "create", "checkout"];
+
+/// Return context-aware argument completions for a given command and partial argument.
+///
+/// `cmd` is the slash command (e.g. "/model"), `partial_arg` is what the user has typed
+/// after the command + space so far. Returns a list of candidate completions.
+pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
+    let partial_lower = partial_arg.to_lowercase();
+    match cmd {
+        "/model" => filter_candidates(KNOWN_MODELS, &partial_lower),
+        "/think" => filter_candidates(THINKING_LEVELS, &partial_lower),
+        "/git" => filter_candidates(GIT_SUBCOMMANDS, &partial_lower),
+        "/pr" => filter_candidates(PR_SUBCOMMANDS, &partial_lower),
+        "/save" | "/load" => list_json_files(partial_arg),
+        _ => Vec::new(),
+    }
+}
+
+/// Filter a list of candidates by a lowercase prefix.
+fn filter_candidates(candidates: &[&str], partial_lower: &str) -> Vec<String> {
+    candidates
+        .iter()
+        .filter(|c| c.to_lowercase().starts_with(partial_lower))
+        .map(|c| c.to_string())
+        .collect()
+}
+
+/// List .json files in the current directory matching a partial prefix.
+fn list_json_files(partial: &str) -> Vec<String> {
+    let entries = match std::fs::read_dir(".") {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+    let mut matches: Vec<String> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".json") && name.starts_with(partial) {
+                Some(name)
+            } else {
+                None
+            }
+        })
+        .collect();
+    matches.sort();
+    matches
+}
+
 /// Check if a slash-prefixed input is an unknown command.
 /// Extracts the first word and checks against known commands.
 pub fn is_unknown_command(input: &str) -> bool {
@@ -4090,5 +4163,163 @@ mod tests {
         assert!(jump_matches("/jump checkpoint"));
         assert!(!jump_matches("/jumper"));
         assert!(!jump_matches("/jumping"));
+    }
+
+    // ── command_arg_completions tests ─────────────────────────────────────
+
+    #[test]
+    fn test_arg_completions_model_empty_prefix() {
+        let candidates = command_arg_completions("/model", "");
+        assert!(!candidates.is_empty(), "Should return known models");
+        assert!(
+            candidates.iter().any(|c| c.contains("claude")),
+            "Should include Claude models"
+        );
+    }
+
+    #[test]
+    fn test_arg_completions_model_partial_prefix() {
+        let candidates = command_arg_completions("/model", "claude");
+        assert!(
+            !candidates.is_empty(),
+            "Should match models starting with 'claude'"
+        );
+        for c in &candidates {
+            assert!(
+                c.starts_with("claude"),
+                "All results should start with 'claude': {c}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_arg_completions_model_gpt_prefix() {
+        let candidates = command_arg_completions("/model", "gpt");
+        assert!(
+            !candidates.is_empty(),
+            "Should match models starting with 'gpt'"
+        );
+        for c in &candidates {
+            assert!(
+                c.starts_with("gpt"),
+                "All results should start with 'gpt': {c}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_arg_completions_model_no_match() {
+        let candidates = command_arg_completions("/model", "zzz_nonexistent");
+        assert!(
+            candidates.is_empty(),
+            "Should return no matches for nonsense"
+        );
+    }
+
+    #[test]
+    fn test_arg_completions_think_empty() {
+        let candidates = command_arg_completions("/think", "");
+        assert_eq!(candidates.len(), 5, "Should return all 5 thinking levels");
+        assert!(candidates.contains(&"off".to_string()));
+        assert!(candidates.contains(&"high".to_string()));
+    }
+
+    #[test]
+    fn test_arg_completions_think_partial() {
+        let candidates = command_arg_completions("/think", "m");
+        assert_eq!(candidates.len(), 2, "Should match 'minimal' and 'medium'");
+        assert!(candidates.contains(&"minimal".to_string()));
+        assert!(candidates.contains(&"medium".to_string()));
+    }
+
+    #[test]
+    fn test_arg_completions_git_empty() {
+        let candidates = command_arg_completions("/git", "");
+        assert!(!candidates.is_empty(), "Should return git subcommands");
+        assert!(candidates.contains(&"status".to_string()));
+        assert!(candidates.contains(&"log".to_string()));
+        assert!(candidates.contains(&"add".to_string()));
+        assert!(candidates.contains(&"diff".to_string()));
+        assert!(candidates.contains(&"branch".to_string()));
+        assert!(candidates.contains(&"stash".to_string()));
+    }
+
+    #[test]
+    fn test_arg_completions_git_partial() {
+        let candidates = command_arg_completions("/git", "st");
+        assert_eq!(
+            candidates.len(),
+            2,
+            "Should match 'status' and 'stash': {candidates:?}"
+        );
+        assert!(candidates.contains(&"status".to_string()));
+        assert!(candidates.contains(&"stash".to_string()));
+    }
+
+    #[test]
+    fn test_arg_completions_pr_empty() {
+        let candidates = command_arg_completions("/pr", "");
+        assert!(!candidates.is_empty(), "Should return PR subcommands");
+        assert!(candidates.contains(&"create".to_string()));
+        assert!(candidates.contains(&"checkout".to_string()));
+        assert!(candidates.contains(&"diff".to_string()));
+    }
+
+    #[test]
+    fn test_arg_completions_pr_partial() {
+        let candidates = command_arg_completions("/pr", "c");
+        assert_eq!(
+            candidates.len(),
+            3,
+            "Should match 'comment', 'create', and 'checkout': {candidates:?}"
+        );
+    }
+
+    #[test]
+    fn test_arg_completions_unknown_command() {
+        let candidates = command_arg_completions("/unknown", "");
+        assert!(
+            candidates.is_empty(),
+            "Unknown commands should return no completions"
+        );
+    }
+
+    #[test]
+    fn test_arg_completions_help_no_args() {
+        // Commands that don't have argument completion should return empty
+        let candidates = command_arg_completions("/help", "");
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn test_arg_completions_case_insensitive() {
+        // Typing uppercase should still find lowercase matches
+        let candidates = command_arg_completions("/model", "CLAUDE");
+        assert!(
+            !candidates.is_empty(),
+            "Should match case-insensitively: {candidates:?}"
+        );
+    }
+
+    #[test]
+    fn test_arg_completions_save_load_json_files() {
+        // Create a temporary .json file to test /save and /load completion
+        let test_file = "test_completion_temp.json";
+        std::fs::write(test_file, "{}").unwrap();
+
+        let save_candidates = command_arg_completions("/save", "test_completion");
+        let load_candidates = command_arg_completions("/load", "test_completion");
+
+        // Clean up before asserting
+        let _ = std::fs::remove_file(test_file);
+
+        assert!(
+            save_candidates.contains(&test_file.to_string()),
+            "/save should complete .json files: {save_candidates:?}"
+        );
+        assert!(
+            load_candidates.contains(&test_file.to_string()),
+            "/load should complete .json files: {load_candidates:?}"
+        );
     }
 }

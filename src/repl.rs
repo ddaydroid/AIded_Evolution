@@ -2,7 +2,8 @@
 
 use crate::cli::*;
 use crate::commands::{
-    self, auto_compact_if_needed, is_unknown_command, thinking_level_name, KNOWN_COMMANDS,
+    self, auto_compact_if_needed, command_arg_completions, is_unknown_command, thinking_level_name,
+    KNOWN_COMMANDS,
 };
 use crate::format::*;
 use crate::git::*;
@@ -40,6 +41,21 @@ impl Completer for YoyoHelper {
                 .map(|cmd| cmd.to_string())
                 .collect();
             return Ok((0, matches));
+        }
+
+        // Argument-aware completion: command + space + partial arg
+        if prefix.starts_with('/') {
+            if let Some(space_pos) = prefix.find(' ') {
+                let cmd = &prefix[..space_pos];
+                let arg_part = &prefix[space_pos + 1..];
+                // Only complete the first argument (no nested spaces)
+                if !arg_part.contains(' ') {
+                    let candidates = command_arg_completions(cmd, arg_part);
+                    if !candidates.is_empty() {
+                        return Ok((space_pos + 1, candidates));
+                    }
+                }
+            }
         }
 
         // File path completion: extract the last whitespace-delimited word
@@ -596,9 +612,27 @@ mod tests {
         assert!(candidates.contains(&"/health".to_string()));
         assert!(!candidates.contains(&"/quit".to_string()));
 
-        // Typing "/model " (with space) should return no completions
-        let (_, candidates) = helper.complete("/model claude", 13, &ctx).unwrap();
-        assert!(candidates.is_empty());
+        // Typing "/model " (with space) should return model completions
+        let (start, candidates) = helper.complete("/model ", 7, &ctx).unwrap();
+        assert_eq!(start, 7);
+        assert!(
+            !candidates.is_empty(),
+            "Should offer model name completions after /model "
+        );
+        assert!(
+            candidates.iter().any(|c| c.contains("claude")),
+            "Should include Claude models"
+        );
+
+        // "/model cl" should filter to Claude models
+        let (start, candidates) = helper.complete("/model cl", 9, &ctx).unwrap();
+        assert_eq!(start, 7);
+        for c in &candidates {
+            assert!(
+                c.starts_with("cl"),
+                "All completions should start with 'cl': {c}"
+            );
+        }
 
         // Regular text that doesn't match any files returns no completions
         let (_, candidates) = helper.complete("zzz_nonexistent_xyz", 19, &ctx).unwrap();
@@ -682,5 +716,94 @@ mod tests {
         assert_eq!(start, 0);
         assert!(candidates.contains(&"/help".to_string()));
         assert!(candidates.contains(&"/health".to_string()));
+    }
+
+    #[test]
+    fn test_arg_completion_think_levels() {
+        use rustyline::history::DefaultHistory;
+        let helper = YoyoHelper;
+        let history = DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+
+        // "/think " should offer thinking level completions
+        let (start, candidates) = helper.complete("/think ", 7, &ctx).unwrap();
+        assert_eq!(start, 7);
+        assert!(candidates.contains(&"off".to_string()));
+        assert!(candidates.contains(&"high".to_string()));
+
+        // "/think m" should filter to medium/minimal
+        let (start, candidates) = helper.complete("/think m", 8, &ctx).unwrap();
+        assert_eq!(start, 7);
+        assert!(candidates.contains(&"medium".to_string()));
+        assert!(candidates.contains(&"minimal".to_string()));
+        assert!(!candidates.contains(&"off".to_string()));
+    }
+
+    #[test]
+    fn test_arg_completion_git_subcommands() {
+        use rustyline::history::DefaultHistory;
+        let helper = YoyoHelper;
+        let history = DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+
+        // "/git " should offer git subcommand completions
+        let (start, candidates) = helper.complete("/git ", 5, &ctx).unwrap();
+        assert_eq!(start, 5);
+        assert!(candidates.contains(&"status".to_string()));
+        assert!(candidates.contains(&"branch".to_string()));
+
+        // "/git s" should filter to status and stash
+        let (start, candidates) = helper.complete("/git s", 6, &ctx).unwrap();
+        assert_eq!(start, 5);
+        assert!(candidates.contains(&"status".to_string()));
+        assert!(candidates.contains(&"stash".to_string()));
+        assert!(!candidates.contains(&"log".to_string()));
+    }
+
+    #[test]
+    fn test_arg_completion_pr_subcommands() {
+        use rustyline::history::DefaultHistory;
+        let helper = YoyoHelper;
+        let history = DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+
+        // "/pr " should offer PR subcommand completions
+        let (start, candidates) = helper.complete("/pr ", 4, &ctx).unwrap();
+        assert_eq!(start, 4);
+        assert!(candidates.contains(&"create".to_string()));
+        assert!(candidates.contains(&"checkout".to_string()));
+    }
+
+    #[test]
+    fn test_arg_completion_falls_through_to_file_path() {
+        use rustyline::history::DefaultHistory;
+        let helper = YoyoHelper;
+        let history = DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+
+        // "/docs Cargo" should fall through to file path completion since /docs
+        // has no custom argument completions
+        let (start, candidates) = helper.complete("/docs Cargo", 11, &ctx).unwrap();
+        assert_eq!(start, 6); // after "/docs "
+        assert!(candidates.iter().any(|c| c == "Cargo.toml"));
+    }
+
+    #[test]
+    fn test_arg_completion_no_nested_spaces() {
+        use rustyline::history::DefaultHistory;
+        let helper = YoyoHelper;
+        let history = DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+
+        // "/git status " (second space) should NOT trigger arg completion again,
+        // it should fall through to file path completion
+        let input = "/git status sr";
+        let (start, candidates) = helper.complete(input, input.len(), &ctx).unwrap();
+        // Should be file path completing "sr" → "src/"
+        assert_eq!(start, 12); // after "/git status "
+        assert!(
+            candidates.contains(&"src/".to_string()),
+            "Second arg should use file path completion: {candidates:?}"
+        );
     }
 }

@@ -29,7 +29,13 @@ If you're not in a git repo, you get a plain prompt:
 yoyo uses [rustyline](https://crates.io/crates/rustyline) for a full readline experience:
 
 - **Arrow keys**: Navigate within the current line (← →) and through command history (↑ ↓)
-- **Tab completion**: Type `/` and press Tab to see available slash commands. Partial matches work too — `/he<Tab>` suggests `/help` and `/health`. File paths also complete — type `src/ma<Tab>` to get `src/main.rs`, or `Cargo<Tab>` to get `Cargo.toml`. Directories complete with a trailing `/` for easy continued navigation.
+- **Tab completion**: Type `/` and press Tab to see available slash commands. Partial matches work too — `/he<Tab>` suggests `/help` and `/health`. After typing a command + space, argument-aware completions kick in:
+  - `/model <Tab>` — suggests known model names (Claude, GPT, Gemini, etc.)
+  - `/think <Tab>` — suggests thinking levels (off, minimal, low, medium, high)
+  - `/git <Tab>` — suggests git subcommands (status, log, add, diff, branch, stash)
+  - `/pr <Tab>` — suggests PR subcommands (list, view, diff, comment, create, checkout)
+  - `/save <Tab>` and `/load <Tab>` — suggest `.json` session files in the current directory
+  - File paths also complete — type `src/ma<Tab>` to get `src/main.rs`, or `Cargo<Tab>` to get `Cargo.toml`. Directories complete with a trailing `/` for easy continued navigation.
 - **History recall**: Previous inputs are saved across sessions
 - **Keyboard shortcuts**: Ctrl-A (start of line), Ctrl-E (end of line), Ctrl-K (kill to end), Ctrl-W (delete word back)
 - **History file**: Stored at `$XDG_DATA_HOME/yoyo/history` (defaults to `~/.local/share/yoyo/history`)
