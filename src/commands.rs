@@ -155,57 +155,92 @@ pub fn thinking_level_name(level: ThinkingLevel) -> &'static str {
 
 // ── /help ────────────────────────────────────────────────────────────────
 
+/// Build help text as a String so it's testable.
+pub fn help_text() -> String {
+    let mut out = String::new();
+
+    // ── Session ──
+    out.push_str("  ── Session ──\n");
+    out.push_str("  /help              Show this help\n");
+    out.push_str("  /quit, /exit       Exit yoyo\n");
+    out.push_str("  /clear             Clear conversation history\n");
+    out.push_str("  /compact           Compact conversation to save context space\n");
+    out.push_str("  /save [path]       Save session to file (default: yoyo-session.json)\n");
+    out.push_str("  /load [path]       Load session from file\n");
+    out.push_str("  /retry             Re-send the last user input\n");
+    out.push_str("  /status            Show session info\n");
+    out.push_str("  /tokens            Show token usage and context window\n");
+    out.push_str("  /cost              Show estimated session cost\n");
+    out.push_str("  /config            Show all current settings\n");
+    out.push_str("  /version           Show yoyo version\n");
+    out.push_str("  /history           Show summary of conversation messages\n");
+    out.push_str("  /search <query>    Search conversation history for matching messages\n");
+    out.push_str("  /mark <name>       Bookmark current conversation state\n");
+    out.push_str(
+        "  /jump <name>       Restore conversation to a bookmark (discards messages after it)\n",
+    );
+    out.push_str("  /marks             List all saved bookmarks\n");
+    out.push('\n');
+
+    // ── Git ──
+    out.push_str("  ── Git ──\n");
+    out.push_str("  /git <subcmd>      Quick git: status, log, add, diff, branch, stash\n");
+    out.push_str("  /diff              Show file summary, change stats, and full diff\n");
+    out.push_str("  /undo              Revert all uncommitted changes (git checkout)\n");
+    out.push_str("  /commit [msg]      Commit staged changes (AI-generates message if no msg)\n");
+    out.push_str("  /pr [number]       List open PRs, view, diff, comment, or checkout a PR\n");
+    out.push_str(
+        "                     /pr create [--draft] | /pr <n> diff | /pr <n> comment <text>\n",
+    );
+    out.push_str(
+        "  /review [path]     AI code review: staged changes (default) or a specific file\n",
+    );
+    out.push('\n');
+
+    // ── Project ──
+    out.push_str("  ── Project ──\n");
+    out.push_str("  /context           Show loaded project context files\n");
+    out.push_str("  /init              Scan project and generate a YOYO.md context file\n");
+    out.push_str("  /health            Run project health checks (auto-detects project type)\n");
+    out.push_str(
+        "  /fix               Auto-fix build/lint errors (runs checks, sends failures to AI)\n",
+    );
+    out.push_str(
+        "  /test              Auto-detect and run project tests (cargo test, npm test, etc.)\n",
+    );
+    out.push_str(
+        "  /lint              Auto-detect and run project linter (clippy, eslint, ruff, etc.)\n",
+    );
+    out.push_str("  /run <cmd>         Run a shell command directly (no AI, no tokens)\n");
+    out.push_str("  !<cmd>             Shortcut for /run\n");
+    out.push_str("  /docs <crate> [item] Look up docs.rs documentation for a Rust crate\n");
+    out.push_str("  /find <pattern>    Fuzzy-search project files by name\n");
+    out.push_str("  /index             Build a lightweight index of project source files\n");
+    out.push_str("  /tree [depth]      Show project directory tree (default depth: 3)\n");
+    out.push('\n');
+
+    // ── AI ──
+    out.push_str("  ── AI ──\n");
+    out.push_str("  /model <name>      Switch model (preserves conversation)\n");
+    out.push_str("  /think [level]     Show or change thinking level (off/low/medium/high)\n");
+    out.push_str("  /spawn <task>      Spawn a subagent to handle a task (separate context)\n");
+    out.push_str(
+        "  /remember <note>   Save a project-specific memory (persists across sessions)\n",
+    );
+    out.push_str("  /memories          List project-specific memories for this directory\n");
+    out.push_str("  /forget <n>        Remove a project memory by index\n");
+    out.push('\n');
+
+    // ── Input ──
+    out.push_str("  ── Input ──\n");
+    out.push_str("  End a line with \\ to continue on the next line\n");
+    out.push_str("  Start with ``` to enter a fenced code block\n");
+
+    out
+}
+
 pub fn handle_help() {
-    println!("{DIM}  /help              Show this help");
-    println!("  /quit, /exit       Exit yoyo");
-    println!("  /clear             Clear conversation history");
-    println!("  /commit [msg]      Commit staged changes (AI-generates message if no msg)");
-    println!("  /compact           Compact conversation to save context space");
-    println!("  /config            Show all current settings");
-    println!("  /context           Show loaded project context files");
-    println!("  /cost              Show estimated session cost");
-    println!("  /docs <crate> [item] Look up docs.rs documentation for a Rust crate");
-    println!("  /find <pattern>     Fuzzy-search project files by name");
-    println!("  /forget <n>        Remove a project memory by index");
-    println!("  /index             Build a lightweight index of project source files");
-    println!("  /init              Scan project and generate a YOYO.md context file");
-    println!("  /memories          List project-specific memories for this directory");
-    println!("  /model <name>      Switch model (preserves conversation)");
-    println!("  /think [level]     Show or change thinking level (off/low/medium/high)");
-    println!("  /status            Show session info");
-    println!("  /tokens            Show token usage and context window");
-    println!("  /save [path]       Save session to file (default: yoyo-session.json)");
-    println!("  /load [path]       Load session from file");
-    println!("  /diff              Show file summary, change stats, and full diff");
-    println!("  /fix               Auto-fix build/lint errors (runs checks, sends failures to AI)");
-    println!("  /git <subcmd>      Quick git: status, log, add, diff, branch, stash");
-    println!("  /undo              Revert all uncommitted changes (git checkout)");
-    println!("  /pr [number]       List open PRs, view, diff, comment, or checkout a PR");
-    println!("                     /pr create [--draft] | /pr <n> diff | /pr <n> comment <text>");
-    println!("  /health            Run project health checks (auto-detects project type)");
-    println!("  /retry             Re-send the last user input");
-    println!("  /remember <note>   Save a project-specific memory (persists across sessions)");
-    println!("  /run <cmd>         Run a shell command directly (no AI, no tokens)");
-    println!("  !<cmd>             Shortcut for /run");
-    println!("  /test              Auto-detect and run project tests (cargo test, npm test, etc.)");
-    println!(
-        "  /lint              Auto-detect and run project linter (clippy, eslint, ruff, etc.)"
-    );
-    println!("  /history           Show summary of conversation messages");
-    println!("  /search <query>    Search conversation history for matching messages");
-    println!("  /mark <name>       Bookmark current conversation state");
-    println!(
-        "  /jump <name>       Restore conversation to a bookmark (discards messages after it)"
-    );
-    println!("  /marks             List all saved bookmarks");
-    println!("  /spawn <task>      Spawn a subagent to handle a task (separate context)");
-    println!("  /review [path]     AI code review: staged changes (default) or a specific file");
-    println!("  /tree [depth]      Show project directory tree (default depth: 3)");
-    println!("  /version           Show yoyo version");
-    println!();
-    println!("  Multi-line input:");
-    println!("  End a line with \\ to continue on the next line");
-    println!("  Start with ``` to enter a fenced code block{RESET}\n");
+    println!("{DIM}{}{RESET}", help_text());
 }
 
 // ── /version ─────────────────────────────────────────────────────────────
@@ -2561,5 +2596,162 @@ mod tests {
         let prompt = prompt.unwrap();
         assert!(prompt.contains("Project Memories"));
         assert!(prompt.contains("always run cargo fmt"));
+    }
+
+    // ── help_text categorization tests ────────────────────────────────────
+
+    #[test]
+    fn test_help_text_contains_all_commands() {
+        let text = help_text();
+        let expected = [
+            "/help",
+            "/quit",
+            "/exit",
+            "/clear",
+            "/compact",
+            "/save",
+            "/load",
+            "/retry",
+            "/status",
+            "/tokens",
+            "/cost",
+            "/config",
+            "/version",
+            "/history",
+            "/search",
+            "/mark",
+            "/jump",
+            "/marks",
+            "/git",
+            "/diff",
+            "/undo",
+            "/commit",
+            "/pr",
+            "/review",
+            "/context",
+            "/init",
+            "/health",
+            "/fix",
+            "/test",
+            "/lint",
+            "/run",
+            "/docs",
+            "/find",
+            "/index",
+            "/tree",
+            "/model",
+            "/think",
+            "/spawn",
+            "/remember",
+            "/memories",
+            "/forget",
+        ];
+        for cmd in &expected {
+            assert!(text.contains(cmd), "help text should contain {cmd}");
+        }
+    }
+
+    #[test]
+    fn test_help_text_has_category_headers() {
+        let text = help_text();
+        let categories = [
+            "── Session ──",
+            "── Git ──",
+            "── Project ──",
+            "── AI ──",
+            "── Input ──",
+        ];
+        for cat in &categories {
+            assert!(
+                text.contains(cat),
+                "help text should contain category header '{cat}'"
+            );
+        }
+    }
+
+    #[test]
+    fn test_help_text_session_commands_under_session_header() {
+        let text = help_text();
+        let session_start = text.find("── Session ──").expect("Session header missing");
+        let git_start = text.find("── Git ──").expect("Git header missing");
+        // Session commands should appear between Session and Git headers
+        let session_section = &text[session_start..git_start];
+        for cmd in &[
+            "/help", "/quit", "/clear", "/compact", "/save", "/load", "/retry", "/status",
+            "/tokens", "/cost", "/config", "/version", "/history", "/search", "/mark", "/jump",
+            "/marks",
+        ] {
+            assert!(
+                session_section.contains(cmd),
+                "{cmd} should be in the Session section"
+            );
+        }
+    }
+
+    #[test]
+    fn test_help_text_git_commands_under_git_header() {
+        let text = help_text();
+        let git_start = text.find("── Git ──").expect("Git header missing");
+        let project_start = text.find("── Project ──").expect("Project header missing");
+        let git_section = &text[git_start..project_start];
+        for cmd in &["/git", "/diff", "/undo", "/commit", "/pr", "/review"] {
+            assert!(
+                git_section.contains(cmd),
+                "{cmd} should be in the Git section"
+            );
+        }
+    }
+
+    #[test]
+    fn test_help_text_project_commands_under_project_header() {
+        let text = help_text();
+        let project_start = text.find("── Project ──").expect("Project header missing");
+        let ai_start = text.find("── AI ──").expect("AI header missing");
+        let project_section = &text[project_start..ai_start];
+        for cmd in &[
+            "/context", "/init", "/health", "/fix", "/test", "/lint", "/run", "/docs", "/find",
+            "/index", "/tree",
+        ] {
+            assert!(
+                project_section.contains(cmd),
+                "{cmd} should be in the Project section"
+            );
+        }
+    }
+
+    #[test]
+    fn test_help_text_ai_commands_under_ai_header() {
+        let text = help_text();
+        let ai_start = text.find("── AI ──").expect("AI header missing");
+        let input_start = text.find("── Input ──").expect("Input header missing");
+        let ai_section = &text[ai_start..input_start];
+        for cmd in &[
+            "/model",
+            "/think",
+            "/spawn",
+            "/remember",
+            "/memories",
+            "/forget",
+        ] {
+            assert!(
+                ai_section.contains(cmd),
+                "{cmd} should be in the AI section"
+            );
+        }
+    }
+
+    #[test]
+    fn test_help_text_input_section() {
+        let text = help_text();
+        let input_start = text.find("── Input ──").expect("Input header missing");
+        let input_section = &text[input_start..];
+        assert!(
+            input_section.contains("\\"),
+            "Input section should mention backslash continuation"
+        );
+        assert!(
+            input_section.contains("```"),
+            "Input section should mention fenced code blocks"
+        );
     }
 }
