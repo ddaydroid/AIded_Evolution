@@ -31,6 +31,7 @@ yoyo uses [rustyline](https://crates.io/crates/rustyline) for a full readline ex
 - **Arrow keys**: Navigate within the current line (← →) and through command history (↑ ↓)
 - **Tab completion**: Type `/` and press Tab to see available slash commands. Partial matches work too — `/he<Tab>` suggests `/help` and `/health`. After typing a command + space, argument-aware completions kick in:
   - `/model <Tab>` — suggests known model names (Claude, GPT, Gemini, etc.)
+  - `/provider <Tab>` — suggests known provider names (anthropic, openai, google, etc.)
   - `/think <Tab>` — suggests thinking levels (off, minimal, low, medium, high)
   - `/git <Tab>` — suggests git subcommands (status, log, add, diff, branch, stash)
   - `/pr <Tab>` — suggests PR subcommands (list, view, diff, comment, create, checkout)

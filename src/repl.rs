@@ -346,6 +346,19 @@ pub async fn run_repl(
                 println!("{DIM}  (switched to {new_model}, conversation preserved){RESET}\n");
                 continue;
             }
+            "/provider" => {
+                commands::handle_provider_show(&agent_config.provider);
+                continue;
+            }
+            s if s.starts_with("/provider ") => {
+                let new_provider = s.trim_start_matches("/provider ").trim();
+                if new_provider.is_empty() {
+                    commands::handle_provider_show(&agent_config.provider);
+                    continue;
+                }
+                commands::handle_provider_switch(new_provider, agent_config, agent);
+                continue;
+            }
             "/think" => {
                 commands::handle_think_show(agent_config.thinking);
                 continue;
@@ -788,6 +801,29 @@ mod tests {
         assert_eq!(start, 4);
         assert!(candidates.contains(&"create".to_string()));
         assert!(candidates.contains(&"checkout".to_string()));
+    }
+
+    #[test]
+    fn test_arg_completion_provider_names() {
+        use rustyline::history::DefaultHistory;
+        let helper = YoyoHelper;
+        let history = DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+
+        // "/provider " should offer provider name completions
+        let (start, candidates) = helper.complete("/provider ", 10, &ctx).unwrap();
+        assert_eq!(start, 10);
+        assert!(candidates.contains(&"anthropic".to_string()));
+        assert!(candidates.contains(&"openai".to_string()));
+        assert!(candidates.contains(&"google".to_string()));
+
+        // "/provider o" should filter to providers starting with 'o'
+        let (start, candidates) = helper.complete("/provider o", 11, &ctx).unwrap();
+        assert_eq!(start, 10);
+        assert!(candidates.contains(&"openai".to_string()));
+        assert!(candidates.contains(&"openrouter".to_string()));
+        assert!(candidates.contains(&"ollama".to_string()));
+        assert!(!candidates.contains(&"anthropic".to_string()));
     }
 
     #[test]

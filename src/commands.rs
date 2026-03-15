@@ -5,6 +5,7 @@
 
 // All handle_* functions in this module are dispatched from the REPL in main.rs.
 
+use crate::cli::{default_model_for_provider, KNOWN_PROVIDERS};
 use crate::cli::{
     is_verbose, AUTO_COMPACT_THRESHOLD, DEFAULT_SESSION_PATH, MAX_CONTEXT_TOKENS, VERSION,
 };
@@ -60,6 +61,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/marks",
     "/remember",
     "/memories",
+    "/provider",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -100,6 +102,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/think" => filter_candidates(THINKING_LEVELS, &partial_lower),
         "/git" => filter_candidates(GIT_SUBCOMMANDS, &partial_lower),
         "/pr" => filter_candidates(PR_SUBCOMMANDS, &partial_lower),
+        "/provider" => filter_candidates(KNOWN_PROVIDERS, &partial_lower),
         "/save" | "/load" => list_json_files(partial_arg),
         _ => Vec::new(),
     }
@@ -222,6 +225,7 @@ pub fn help_text() -> String {
     // ── AI ──
     out.push_str("  ── AI ──\n");
     out.push_str("  /model <name>      Switch model (preserves conversation)\n");
+    out.push_str("  /provider <name>   Switch provider (resets model to provider default)\n");
     out.push_str("  /think [level]     Show or change thinking level (off/low/medium/high)\n");
     out.push_str("  /spawn <task>      Spawn a subagent to handle a task (separate context)\n");
     out.push_str(
@@ -369,6 +373,37 @@ pub async fn handle_retry(
 pub fn handle_model_show(model: &str) {
     println!("{DIM}  current model: {model}");
     println!("  usage: /model <name>{RESET}\n");
+}
+
+// ── /provider ────────────────────────────────────────────────────────────
+
+pub fn handle_provider_show(provider: &str) {
+    println!("{DIM}  current provider: {provider}");
+    println!("  usage: /provider <name>");
+    println!("  available: {}{RESET}\n", KNOWN_PROVIDERS.join(", "));
+}
+
+pub fn handle_provider_switch(
+    new_provider: &str,
+    agent_config: &mut crate::AgentConfig,
+    agent: &mut Agent,
+) {
+    if !KNOWN_PROVIDERS.contains(&new_provider) {
+        eprintln!("{RED}  unknown provider: '{new_provider}'{RESET}");
+        eprintln!("{DIM}  available: {}{RESET}\n", KNOWN_PROVIDERS.join(", "));
+        return;
+    }
+    agent_config.provider = new_provider.to_string();
+    agent_config.model = default_model_for_provider(new_provider);
+    let saved = agent.save_messages().ok();
+    *agent = agent_config.build_agent();
+    if let Some(json) = saved {
+        let _ = agent.restore_messages(&json);
+    }
+    println!(
+        "{DIM}  (switched to provider '{}', model '{}', conversation preserved){RESET}\n",
+        agent_config.provider, agent_config.model
+    );
 }
 
 // ── /think ───────────────────────────────────────────────────────────────
@@ -666,6 +701,7 @@ mod tests {
             "/marks",
             "/remember",
             "/memories",
+            "/provider",
         ];
         for cmd in &commands {
             assert!(
@@ -691,6 +727,143 @@ mod tests {
         assert!(!input.starts_with("/model "));
     }
 
+    // ── /provider tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_provider_command_recognized() {
+        assert!(!is_unknown_command("/provider"));
+        assert!(!is_unknown_command("/provider openai"));
+        assert!(
+            KNOWN_COMMANDS.contains(&"/provider"),
+            "/provider should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn test_provider_command_matching() {
+        let provider_matches = |s: &str| s == "/provider" || s.starts_with("/provider ");
+        assert!(provider_matches("/provider"));
+        assert!(provider_matches("/provider openai"));
+        assert!(provider_matches("/provider google"));
+        assert!(!provider_matches("/providers"));
+        assert!(!provider_matches("/providing"));
+    }
+
+    #[test]
+    fn test_provider_show_does_not_panic() {
+        // handle_provider_show should not panic for any known provider
+        for provider in KNOWN_PROVIDERS {
+            handle_provider_show(provider);
+        }
+    }
+
+    #[test]
+    fn test_provider_switch_valid() {
+        use crate::cli;
+        let mut config = crate::AgentConfig {
+            model: "claude-opus-4-6".to_string(),
+            api_key: "test-key".to_string(),
+            provider: "anthropic".to_string(),
+            base_url: None,
+            skills: yoagent::skills::SkillSet::empty(),
+            system_prompt: "Test.".to_string(),
+            thinking: ThinkingLevel::Off,
+            max_tokens: None,
+            temperature: None,
+            max_turns: None,
+            auto_approve: true,
+            permissions: cli::PermissionConfig::default(),
+            dir_restrictions: cli::DirectoryRestrictions::default(),
+        };
+        let mut agent = config.build_agent();
+        handle_provider_switch("openai", &mut config, &mut agent);
+        assert_eq!(config.provider, "openai");
+        assert_eq!(config.model, "gpt-4o");
+    }
+
+    #[test]
+    fn test_provider_switch_invalid() {
+        use crate::cli;
+        let mut config = crate::AgentConfig {
+            model: "claude-opus-4-6".to_string(),
+            api_key: "test-key".to_string(),
+            provider: "anthropic".to_string(),
+            base_url: None,
+            skills: yoagent::skills::SkillSet::empty(),
+            system_prompt: "Test.".to_string(),
+            thinking: ThinkingLevel::Off,
+            max_tokens: None,
+            temperature: None,
+            max_turns: None,
+            auto_approve: true,
+            permissions: cli::PermissionConfig::default(),
+            dir_restrictions: cli::DirectoryRestrictions::default(),
+        };
+        let mut agent = config.build_agent();
+        // Invalid provider should not change the config
+        handle_provider_switch("nonexistent_provider", &mut config, &mut agent);
+        assert_eq!(config.provider, "anthropic");
+        assert_eq!(config.model, "claude-opus-4-6");
+    }
+
+    #[test]
+    fn test_provider_switch_sets_default_model() {
+        use crate::cli;
+        let mut config = crate::AgentConfig {
+            model: "claude-opus-4-6".to_string(),
+            api_key: "test-key".to_string(),
+            provider: "anthropic".to_string(),
+            base_url: None,
+            skills: yoagent::skills::SkillSet::empty(),
+            system_prompt: "Test.".to_string(),
+            thinking: ThinkingLevel::Off,
+            max_tokens: None,
+            temperature: None,
+            max_turns: None,
+            auto_approve: true,
+            permissions: cli::PermissionConfig::default(),
+            dir_restrictions: cli::DirectoryRestrictions::default(),
+        };
+        let mut agent = config.build_agent();
+        // Switch to google → should use gemini default
+        handle_provider_switch("google", &mut config, &mut agent);
+        assert_eq!(config.provider, "google");
+        assert_eq!(config.model, "gemini-2.0-flash");
+    }
+
+    #[test]
+    fn test_provider_arg_completions_empty() {
+        let candidates = command_arg_completions("/provider", "");
+        assert!(!candidates.is_empty(), "Should return known providers");
+        assert!(candidates.contains(&"anthropic".to_string()));
+        assert!(candidates.contains(&"openai".to_string()));
+        assert!(candidates.contains(&"google".to_string()));
+    }
+
+    #[test]
+    fn test_provider_arg_completions_partial() {
+        let candidates = command_arg_completions("/provider", "o");
+        assert!(
+            !candidates.is_empty(),
+            "Should match providers starting with 'o'"
+        );
+        for c in &candidates {
+            assert!(c.starts_with("o"), "All results should start with 'o': {c}");
+        }
+        assert!(candidates.contains(&"openai".to_string()));
+        assert!(candidates.contains(&"openrouter".to_string()));
+        assert!(candidates.contains(&"ollama".to_string()));
+    }
+
+    #[test]
+    fn test_provider_arg_completions_no_match() {
+        let candidates = command_arg_completions("/provider", "zzz_nonexistent");
+        assert!(
+            candidates.is_empty(),
+            "Should return no matches for nonsense"
+        );
+    }
+
     #[test]
     fn test_unknown_slash_command_detection() {
         assert!(is_unknown_command("/foo"));
@@ -711,6 +884,8 @@ mod tests {
         assert!(!is_unknown_command("/config"));
         assert!(!is_unknown_command("/context"));
         assert!(!is_unknown_command("/version"));
+        assert!(!is_unknown_command("/provider"));
+        assert!(!is_unknown_command("/provider openai"));
     }
 
     #[test]
@@ -2645,6 +2820,7 @@ mod tests {
             "/remember",
             "/memories",
             "/forget",
+            "/provider",
         ];
         for cmd in &expected {
             assert!(text.contains(cmd), "help text should contain {cmd}");
@@ -2732,6 +2908,7 @@ mod tests {
             "/remember",
             "/memories",
             "/forget",
+            "/provider",
         ] {
             assert!(
                 ai_section.contains(cmd),

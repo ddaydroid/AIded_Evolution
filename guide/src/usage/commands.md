@@ -42,21 +42,24 @@ The `/mark` and `/jump` commands let you bookmark points in your conversation an
 
 Bookmarks are stored in memory for the current session. Overwriting a bookmark with the same name updates it. Jumping to a bookmark restores the conversation to exactly that point — any messages added after the bookmark are discarded.
 
-## Model & Thinking
+## Model, Provider & Thinking
 
 | Command | Description |
 |---------|-------------|
 | `/model <name>` | Switch to a different model (preserves conversation) |
+| `/provider <name>` | Switch provider and reset model to the provider's default |
 | `/think [level]` | Show or change thinking level: `off`, `minimal`, `low`, `medium`, `high` |
 
 Examples:
 ```
 /model claude-sonnet-4-20250514
+/provider openai
+/provider google
 /think high
 /think off
 ```
 
-The `/think` command preserves your conversation history — only the thinking level changes. The `/model` command also preserves conversation.
+The `/model` command preserves conversation when switching models. The `/provider` command switches to a different API provider (e.g., `anthropic`, `openai`, `google`, `openrouter`, `ollama`, `xai`, `groq`, `deepseek`, `mistral`, `cerebras`, `custom`) and automatically sets the model to the provider's default. Use `/provider` without arguments to see the current provider and available options. The `/think` command adjusts the thinking level.
 
 ## Session
 
