@@ -21,6 +21,7 @@
 - [System Prompts](./configuration/system-prompts.md)
 - [Extended Thinking](./configuration/thinking.md)
 - [Skills](./configuration/skills.md)
+- [Permissions & Safety](./configuration/permissions.md)
 
 # Features
 
