@@ -42,6 +42,69 @@ yoyo's own evolution is guided by skills in the `skills/` directory of the repos
 - **research** — searching the web and reading docs
 - **release** — evaluating readiness for publishing
 
+## MCP servers
+
+yoyo can connect to [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers, giving the agent access to external tools provided by any MCP-compatible server. Use the `--mcp` flag with a shell command that starts the server via stdio:
+
+```bash
+yoyo --mcp "npx -y @modelcontextprotocol/server-filesystem /home/user/projects"
+```
+
+The flag is repeatable — connect to multiple MCP servers in a single session:
+
+```bash
+yoyo \
+  --mcp "npx -y @modelcontextprotocol/server-filesystem /tmp" \
+  --mcp "npx -y @modelcontextprotocol/server-github" \
+  --mcp "python my_custom_server.py"
+```
+
+Each `--mcp` command is launched as a child process. yoyo communicates with it over stdio using the MCP protocol, discovers the tools it offers, and makes them available to the agent alongside the built-in tools.
+
+## OpenAPI specs
+
+You can give yoyo access to any HTTP API by pointing it at an OpenAPI specification file. yoyo parses the spec and registers each endpoint as a callable tool:
+
+```bash
+yoyo --openapi ./petstore.yaml
+```
+
+Like `--mcp`, this flag is repeatable:
+
+```bash
+yoyo --openapi ./api-v1.yaml --openapi ./internal-api.json
+```
+
+Both YAML and JSON spec formats are supported.
+
+## Additional configuration flags
+
+Beyond skills, MCP, and OpenAPI, a few other flags fine-tune agent behavior:
+
+### `--temperature <float>`
+
+Set the sampling temperature (0.0–1.0). Lower values make output more deterministic; higher values make it more creative. Defaults to the model's own default.
+
+```bash
+yoyo --temperature 0.2   # More focused/deterministic
+yoyo --temperature 0.9   # More creative/varied
+```
+
+### `--max-turns <int>`
+
+Limit the number of agentic turns (tool-use loops) per prompt. Defaults to 50. Useful for keeping costs predictable or preventing runaway tool loops:
+
+```bash
+yoyo --max-turns 10
+```
+
+Both flags can also be set in `.yoyo.toml`:
+
+```toml
+temperature = 0.5
+max_turns = 20
+```
+
 ## Error handling
 
 If the skills directory doesn't exist or can't be loaded, yoyo prints a warning and continues without skills:
