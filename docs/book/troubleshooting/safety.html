@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Piped Mode - yoyo documentation</title>
+        <title>Safety &amp; Anti-Crash Guarantees - yoyo documentation</title>
 
 
         <!-- Custom HTML head -->
@@ -155,45 +155,107 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 id="piped-mode"><a class="header" href="#piped-mode">Piped Mode</a></h1>
-<p>When stdin is not a terminal (i.e., input is piped), yoyo reads all of stdin as a single prompt, processes it, and exits. This works like single-prompt mode but takes input from a pipe instead of a flag.</p>
-<h2 id="usage"><a class="header" href="#usage">Usage</a></h2>
-<pre><code class="language-bash">echo "explain this code" | yoyo
-cat prompt.txt | yoyo
-git diff | yoyo
+                        <h1 id="safety--anti-crash-guarantees"><a class="header" href="#safety--anti-crash-guarantees">Safety &amp; Anti-Crash Guarantees</a></h1>
+<p>How does a coding agent that edits its own source code avoid breaking itself?</p>
+<p>Good question. yoyo has six layers of defense — from the innermost loop
+(every single code change) to the outermost (protected files that can never
+be touched). Here's how each one works.</p>
+<h2 id="layer-1-build-and-test-gate-on-every-commit"><a class="header" href="#layer-1-build-and-test-gate-on-every-commit">Layer 1: Build-and-test gate on every commit</a></h2>
+<p>No code change is ever committed unless it passes:</p>
+<pre><code class="language-bash">cargo build &amp;&amp; cargo test
 </code></pre>
-<h2 id="when-to-use-it"><a class="header" href="#when-to-use-it">When to use it</a></h2>
-<p>Piped mode is useful for:</p>
+<p>This happens inside the evolution session itself. The agent runs the
+build and test suite after every edit. If either fails, the change
+doesn't get committed — the agent reads the error and tries to fix it.</p>
+<h2 id="layer-2-ci-on-every-push"><a class="header" href="#layer-2-ci-on-every-push">Layer 2: CI on every push</a></h2>
+<p>Even after the agent commits locally, GitHub Actions runs the full
+check suite on every push to <code>main</code>:</p>
+<pre><code>cargo build
+cargo test
+cargo clippy --all-targets -- -D warnings
+cargo fmt -- --check
+</code></pre>
+<p>Clippy warnings are treated as errors (<code>-D warnings</code>), so even subtle
+issues like unused variables or redundant clones get caught. If CI
+fails, the next evolution session sees the failure and prioritizes
+fixing it before doing anything else.</p>
+<h2 id="layer-3-automatic-revert-on-build-failure"><a class="header" href="#layer-3-automatic-revert-on-build-failure">Layer 3: Automatic revert on build failure</a></h2>
+<p>The evolution script (<code>evolve.sh</code>) has a post-session verification step.
+After all tasks run, it re-checks the build. If it fails:</p>
+<ol>
+<li>It gives the agent up to 3 attempts to fix the errors automatically</li>
+<li>If all fix attempts fail, it reverts to the pre-session state:
+<pre><code class="language-bash">git checkout "$SESSION_START_SHA" -- src/
+</code></pre>
+</li>
+</ol>
+<p>This means a broken session can never leave <code>src/</code> in a worse state
+than it started. The revert is surgical — it only touches source files,
+preserving journal entries and other non-code changes.</p>
+<h2 id="layer-4-tests-before-features"><a class="header" href="#layer-4-tests-before-features">Layer 4: Tests before features</a></h2>
+<p>yoyo's evolve skill requires writing a test <em>before</em> adding a feature.
+This isn't just a guideline — the planning phase explicitly instructs
+each implementation task to "write a test first if possible."</p>
+<p>Why this matters: if you write the test first, you know the test
+covers the new behavior. If you write the feature first, you might
+write a test that only confirms what you already built, missing edge
+cases.</p>
+<h2 id="layer-5-no-deleting-existing-tests"><a class="header" href="#layer-5-no-deleting-existing-tests">Layer 5: No deleting existing tests</a></h2>
+<p>The evolve skill has a hard rule: <strong>never delete existing tests.</strong>
+Tests are the agent's immune system. Removing them would let
+regressions slip through silently. As of this writing, yoyo has
+91+ tests, and that number only goes up.</p>
+<h2 id="layer-6-protected-files"><a class="header" href="#layer-6-protected-files">Layer 6: Protected files</a></h2>
+<p>Some files are simply off-limits. The agent cannot modify:</p>
+<div class="table-wrapper"><table><thead><tr><th>File</th><th>Why it's protected</th></tr></thead><tbody>
+<tr><td><code>IDENTITY.md</code></td><td>yoyo's constitution — defines who it is and its core rules</td></tr>
+<tr><td><code>PERSONALITY.md</code></td><td>yoyo's voice and values</td></tr>
+<tr><td><code>scripts/evolve.sh</code></td><td>The evolution loop itself — if this broke, recovery would be manual</td></tr>
+<tr><td><code>scripts/format_issues.py</code></td><td>Input sanitization for GitHub issues</td></tr>
+<tr><td><code>scripts/build_site.py</code></td><td>Website builder</td></tr>
+<tr><td><code>.github/workflows/*</code></td><td>CI configuration — the safety net that catches everything else</td></tr>
+</tbody></table>
+</div>
+<p>These files can only be changed by human maintainers. This prevents
+a subtle failure mode: the agent "improving" its own safety checks
+in a way that weakens them.</p>
+<h2 id="what-happens-in-practice"><a class="header" href="#what-happens-in-practice">What happens in practice</a></h2>
+<p>A typical evolution session:</p>
+<ol>
+<li><code>evolve.sh</code> verifies the build passes <em>before</em> starting</li>
+<li>The planning agent reads source code, journal, and issues</li>
+<li>Implementation agents execute tasks, each running build+test after changes</li>
+<li>Post-session verification re-checks everything</li>
+<li>If anything broke, automatic fix attempts kick in</li>
+<li>If fixes fail, revert to pre-session state</li>
+<li>CI runs on push as a final backstop</li>
+<li>Next session checks CI status — failures get top priority</li>
+</ol>
+<p>The result: yoyo has been evolving autonomously since Day 0, growing
+from ~200 lines to ~3,100+ lines, without ever shipping a broken build
+to <code>main</code>.</p>
+<h2 id="can-it-still-break"><a class="header" href="#can-it-still-break">Can it still break?</a></h2>
+<p>Theoretically, yes. Safety is defense-in-depth, not a proof of
+correctness. Some scenarios the current system <em>doesn't</em> catch:</p>
 <ul>
-<li><strong>Passing file contents</strong> as part of the prompt</li>
-<li><strong>Chaining with other commands</strong> in a pipeline</li>
-<li><strong>Feeding structured input</strong> from scripts</li>
+<li><strong>Logic bugs that pass tests</strong> — if the test suite doesn't cover
+a behavior, the agent could change it without noticing</li>
+<li><strong>Performance regressions</strong> — there are no benchmarks (yet)</li>
+<li><strong>Subtle UX regressions</strong> — the agent tests functionality, not
+user experience</li>
 </ul>
-<h2 id="examples"><a class="header" href="#examples">Examples</a></h2>
-<p><strong>Review a git diff:</strong></p>
-<pre><code class="language-bash">git diff HEAD~1 | yoyo --system "Review this diff for bugs."
-</code></pre>
-<p><strong>Analyze a file:</strong></p>
-<pre><code class="language-bash">cat src/main.rs | yoyo --system "Find all potential panics in this Rust code."
-</code></pre>
-<p><strong>Process command output:</strong></p>
-<pre><code class="language-bash">cargo test 2&gt;&amp;1 | yoyo --system "Explain these test failures and suggest fixes."
-</code></pre>
-<h2 id="detection"><a class="header" href="#detection">Detection</a></h2>
-<p>yoyo detects piped mode automatically by checking if stdin is a terminal. If it is not, piped mode activates. If stdin is a terminal, interactive REPL mode starts instead.</p>
-<p>If piped input is empty, yoyo exits with an error: <code>No input on stdin.</code></p>
+<p>These are areas for future improvement. But for the core guarantee —
+"the agent won't commit code that doesn't compile or pass tests" —
+the six layers above make that extremely unlikely.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
-                            <a rel="prev" href="../usage/single-prompt.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../troubleshooting/common-issues.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
 
-                            <a rel="next prefetch" href="../usage/commands.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                                <i class="fa fa-angle-right"></i>
-                            </a>
 
                         <div style="clear: both"></div>
                     </nav>
@@ -201,13 +263,10 @@ git diff | yoyo
             </div>
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
-                    <a rel="prev" href="../usage/single-prompt.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../troubleshooting/common-issues.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
 
-                    <a rel="next prefetch" href="../usage/commands.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                        <i class="fa fa-angle-right"></i>
-                    </a>
             </nav>
 
         </div>
