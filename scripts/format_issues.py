@@ -156,7 +156,7 @@ def format_issues(issues, sponsor_logins=None, pick=3, day=0):
         selected.extend(yoyo_last[:remaining_slots])
 
     if not selected:
-        return f"No new community issues (all {len(issues)} already responded to)."
+        return f"No new community issues (all {len(active) + len(yoyo_last)} already handled)."
 
     boundary = generate_boundary()
     boundary_begin = f"[{boundary}-BEGIN]"

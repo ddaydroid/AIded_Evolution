@@ -50,8 +50,12 @@ jobs:
 
       - name: Install mdbook
         run: |
-          curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.4.44/mdbook-v0.4.44-x86_64-unknown-linux-gnu.tar.gz \
-            | tar -xz -C /usr/local/bin
+          curl -fSL --retry 3 --retry-delay 5 \
+            "https://github.com/rust-lang/mdBook/releases/download/v0.4.44/mdbook-v0.4.44-x86_64-unknown-linux-gnu.tar.gz" \
+            -o /tmp/mdbook.tar.gz
+          tar -xz -C /usr/local/bin -f /tmp/mdbook.tar.gz
+          rm /tmp/mdbook.tar.gz
+          mdbook --version
 
       - name: Configure git
         run: |
@@ -98,6 +102,7 @@ jobs:
       - name: Retry after 45min
         id: attempt3
         if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+        continue-on-error: true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           REPO: ${{ github.repository }}
