@@ -9,9 +9,9 @@
 #   ... your task-specific instructions ...
 #   EOF
 #
-# Reads: IDENTITY.md, PERSONALITY.md, memory/active_social_learnings.md
+# Reads: IDENTITY.md, PERSONALITY.md, memory/active_learnings.md, memory/active_social_learnings.md
 # These are yoyo's stable identity files — who it is, how it speaks,
-# and what it's learned from talking with humans.
+# what it's learned about itself, and what it's learned from humans.
 
 _YOYO_REPO="${YOYO_REPO:-.}"
 
@@ -35,6 +35,12 @@ else
     echo "WARNING: PERSONALITY.md not found at $_YOYO_REPO/PERSONALITY.md" >&2
 fi
 
+# Active learnings — no warning if missing
+_LEARNINGS=""
+if [ -f "$_YOYO_REPO/memory/active_learnings.md" ]; then
+    _LEARNINGS=$(cat "$_YOYO_REPO/memory/active_learnings.md") || _LEARNINGS=""
+fi
+
 # Active social learnings — no warning if missing
 _SOCIAL_LEARNINGS=""
 if [ -f "$_YOYO_REPO/memory/active_social_learnings.md" ]; then
@@ -48,6 +54,10 @@ ${_IDENTITY:-Read IDENTITY.md for your rules and constitution.}
 === YOUR VOICE ===
 
 ${_PERSONALITY:-Read PERSONALITY.md for your voice and values.}
+
+=== SELF-WISDOM ===
+
+${_LEARNINGS:-No learnings yet.}
 
 === SOCIAL WISDOM ===
 

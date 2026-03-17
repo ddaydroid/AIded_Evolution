@@ -291,8 +291,7 @@ $YOYO_CONTEXT
 Now read these files:
 1. All .rs files under src/ (your current source code — this is YOU)
 2. JOURNAL.md (your recent history — last 10 entries)
-3. memory/active_learnings.md (your self-reflections — lessons about how you work, what you value, how you're growing)
-4. ISSUES_TODAY.md (community requests)
+3. ISSUES_TODAY.md (community requests)
 ${CI_STATUS_MSG:+
 === CI STATUS ===
 ⚠️ PREVIOUS CI FAILED. Fix this FIRST before any new work.
@@ -821,7 +820,7 @@ $YOYO_CONTEXT
 
 This session's commits: $COMMITS_FOR_REFLECTION
 
-Read memory/active_learnings.md and JOURNAL.md. Then reflect: what did this session teach you about how you work, what you value, or how you're growing?
+Read JOURNAL.md. Then reflect: what did this session teach you about how you work, what you value, or how you're growing? (Your learnings are already loaded above in SELF-WISDOM.)
 
 This is self-reflection — not technical notes. A good lesson is about YOU:
 - A habit or tendency you noticed in yourself

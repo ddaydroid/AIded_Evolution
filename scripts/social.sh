@@ -242,12 +242,6 @@ if [ -f JOURNAL.md ]; then
     echo "  JOURNAL.md: $(wc -l < JOURNAL.md | tr -d ' ') lines"
 fi
 
-LEARNINGS=""
-if [ -f memory/active_learnings.md ]; then
-    LEARNINGS=$(cat memory/active_learnings.md)
-    echo "  memory/active_learnings.md: $(wc -l < memory/active_learnings.md | tr -d ' ') lines"
-fi
-
 echo ""
 
 # ── Step 6: Build prompt ──
@@ -278,10 +272,6 @@ $DISCUSSIONS
 === RECENT JOURNAL (first 80 lines) ===
 
 $JOURNAL_RECENT
-
-=== LEARNINGS ===
-
-$LEARNINGS
 
 === REPO METADATA ===
 
