@@ -715,29 +715,134 @@ fn highlight_toml_value(value: &str) -> String {
 /// Get pricing rates (per MTok) for a model.
 /// Returns (input, cache_write, cache_read, output) or None if model is unknown.
 fn model_pricing(model: &str) -> Option<(f64, f64, f64, f64)> {
-    // Pricing from https://docs.anthropic.com/en/about-claude/pricing
+    // Returns (input_per_MTok, cache_write_per_MTok, cache_read_per_MTok, output_per_MTok)
+    // For providers without caching, cache_write and cache_read are set to 0.0.
+
+    // Strip common OpenRouter prefixes (e.g. "anthropic/claude-sonnet-4-20250514")
+    let model = model
+        .strip_prefix("anthropic/")
+        .or_else(|| model.strip_prefix("openai/"))
+        .or_else(|| model.strip_prefix("google/"))
+        .or_else(|| model.strip_prefix("deepseek/"))
+        .or_else(|| model.strip_prefix("mistralai/"))
+        .or_else(|| model.strip_prefix("x-ai/"))
+        .or_else(|| model.strip_prefix("meta-llama/"))
+        .unwrap_or(model);
+
+    // ── Anthropic ─────────────────────────────────────────────────────
+    // https://docs.anthropic.com/en/about-claude/pricing
     if model.contains("opus") {
         if model.contains("4-6")
             || model.contains("4-5")
             || model.contains("4.6")
             || model.contains("4.5")
         {
-            Some((5.0, 6.25, 0.50, 25.0))
+            return Some((5.0, 6.25, 0.50, 25.0));
         } else {
-            // Opus 4, 4.1 etc.
-            Some((15.0, 18.75, 1.50, 75.0))
+            return Some((15.0, 18.75, 1.50, 75.0));
         }
-    } else if model.contains("sonnet") {
-        Some((3.0, 3.75, 0.30, 15.0))
-    } else if model.contains("haiku") {
-        if model.contains("4-5") || model.contains("4.5") {
-            Some((1.0, 1.25, 0.10, 5.0))
-        } else {
-            Some((0.80, 1.0, 0.08, 4.0))
-        }
-    } else {
-        None
     }
+    if model.contains("sonnet") {
+        return Some((3.0, 3.75, 0.30, 15.0));
+    }
+    if model.contains("haiku") {
+        if model.contains("4-5") || model.contains("4.5") {
+            return Some((1.0, 1.25, 0.10, 5.0));
+        } else {
+            return Some((0.80, 1.0, 0.08, 4.0));
+        }
+    }
+
+    // ── OpenAI ────────────────────────────────────────────────────────
+    // https://platform.openai.com/docs/pricing
+    if model.starts_with("gpt-4.1") {
+        if model.contains("mini") {
+            return Some((0.40, 0.0, 0.0, 1.60)); // gpt-4.1-mini
+        } else if model.contains("nano") {
+            return Some((0.10, 0.0, 0.0, 0.40)); // gpt-4.1-nano
+        } else {
+            return Some((2.00, 0.0, 0.0, 8.00)); // gpt-4.1
+        }
+    }
+    if model.starts_with("gpt-4o") {
+        if model.contains("mini") {
+            return Some((0.15, 0.0, 0.0, 0.60)); // gpt-4o-mini
+        } else {
+            return Some((2.50, 0.0, 0.0, 10.00)); // gpt-4o
+        }
+    }
+    if model.starts_with("o4-mini") {
+        return Some((1.10, 0.0, 0.0, 4.40));
+    }
+    if model.starts_with("o3-mini") {
+        return Some((1.10, 0.0, 0.0, 4.40));
+    }
+    if model == "o3" {
+        return Some((2.00, 0.0, 0.0, 8.00));
+    }
+
+    // ── Google Gemini ─────────────────────────────────────────────────
+    // https://ai.google.dev/pricing
+    if model.contains("gemini-2.5-pro") {
+        return Some((1.25, 0.0, 0.0, 10.00));
+    }
+    if model.contains("gemini-2.5-flash") {
+        return Some((0.15, 0.0, 0.0, 0.60));
+    }
+    if model.contains("gemini-2.0-flash") {
+        return Some((0.10, 0.0, 0.0, 0.40));
+    }
+
+    // ── DeepSeek ──────────────────────────────────────────────────────
+    // https://platform.deepseek.com/api-docs/pricing/
+    if model.contains("deepseek-chat") || model.contains("deepseek-v3") {
+        return Some((0.27, 0.0, 0.0, 1.10));
+    }
+    if model.contains("deepseek-reasoner") || model.contains("deepseek-r1") {
+        return Some((0.55, 0.0, 0.0, 2.19));
+    }
+
+    // ── Mistral ───────────────────────────────────────────────────────
+    // https://mistral.ai/products#pricing
+    if model.contains("mistral-large") {
+        return Some((2.00, 0.0, 0.0, 6.00));
+    }
+    if model.contains("mistral-small") || model.contains("mistral-latest") {
+        return Some((0.10, 0.0, 0.0, 0.30));
+    }
+    if model.contains("codestral") {
+        return Some((0.30, 0.0, 0.0, 0.90));
+    }
+
+    // ── xAI (Grok) ───────────────────────────────────────────────────
+    // https://docs.x.ai/docs/models#models-and-pricing
+    if model.contains("grok-3") {
+        if model.contains("mini") {
+            return Some((0.30, 0.0, 0.0, 0.50));
+        } else {
+            return Some((3.00, 0.0, 0.0, 15.00));
+        }
+    }
+    if model.contains("grok-2") {
+        return Some((2.00, 0.0, 0.0, 10.00));
+    }
+
+    // ── Groq (hosted models) ─────────────────────────────────────────
+    // https://groq.com/pricing/
+    if model.contains("llama-3.3-70b") || model.contains("llama3-70b") {
+        return Some((0.59, 0.0, 0.0, 0.79));
+    }
+    if model.contains("llama-3.1-8b") || model.contains("llama3-8b") {
+        return Some((0.05, 0.0, 0.0, 0.08));
+    }
+    if model.contains("mixtral-8x7b") {
+        return Some((0.24, 0.0, 0.0, 0.24));
+    }
+    if model.contains("gemma2-9b") {
+        return Some((0.20, 0.0, 0.0, 0.20));
+    }
+
+    None
 }
 
 /// Estimate cost in USD for a given usage and model.
@@ -1396,7 +1501,8 @@ mod tests {
             cache_write: 0,
             total_tokens: 0,
         };
-        assert!(estimate_cost(&usage, "gpt-4o").is_none());
+        // A truly unknown model should return None
+        assert!(estimate_cost(&usage, "unknown-model-xyz").is_none());
     }
 
     #[test]
@@ -1432,7 +1538,348 @@ mod tests {
             cache_write: 0,
             total_tokens: 0,
         };
-        assert!(cost_breakdown(&usage, "gpt-4o").is_none());
+        assert!(cost_breakdown(&usage, "unknown-model-xyz").is_none());
+    }
+
+    // ── OpenAI model pricing tests ───────────────────────────────────
+
+    #[test]
+    fn test_estimate_cost_gpt4o() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 100_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // gpt-4o: $2.50/MTok input, $10.00/MTok output
+        let cost = estimate_cost(&usage, "gpt-4o").unwrap();
+        assert!((cost - 3.5).abs() < 0.001, "gpt-4o cost: {cost}");
+    }
+
+    #[test]
+    fn test_estimate_cost_gpt4o_mini() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // gpt-4o-mini: $0.15/MTok input, $0.60/MTok output
+        let cost = estimate_cost(&usage, "gpt-4o-mini").unwrap();
+        assert!((cost - 0.75).abs() < 0.001, "gpt-4o-mini cost: {cost}");
+    }
+
+    #[test]
+    fn test_estimate_cost_gpt41() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 100_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // gpt-4.1: $2.00/MTok input, $8.00/MTok output
+        let cost = estimate_cost(&usage, "gpt-4.1").unwrap();
+        assert!((cost - 2.8).abs() < 0.001, "gpt-4.1 cost: {cost}");
+    }
+
+    #[test]
+    fn test_estimate_cost_gpt41_mini() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // gpt-4.1-mini: $0.40/MTok input, $1.60/MTok output
+        let cost = estimate_cost(&usage, "gpt-4.1-mini").unwrap();
+        assert!((cost - 2.0).abs() < 0.001, "gpt-4.1-mini cost: {cost}");
+    }
+
+    #[test]
+    fn test_estimate_cost_o3() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 100_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // o3: $2.00/MTok input, $8.00/MTok output
+        let cost = estimate_cost(&usage, "o3").unwrap();
+        assert!((cost - 2.8).abs() < 0.001, "o3 cost: {cost}");
+    }
+
+    #[test]
+    fn test_estimate_cost_o4_mini() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 100_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // o4-mini: $1.10/MTok input, $4.40/MTok output
+        let cost = estimate_cost(&usage, "o4-mini").unwrap();
+        assert!((cost - 1.54).abs() < 0.001, "o4-mini cost: {cost}");
+    }
+
+    // ── Google Gemini pricing tests ──────────────────────────────────
+
+    #[test]
+    fn test_estimate_cost_gemini_25_pro() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 100_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // gemini-2.5-pro: $1.25/MTok input, $10.00/MTok output
+        let cost = estimate_cost(&usage, "gemini-2.5-pro").unwrap();
+        assert!((cost - 2.25).abs() < 0.001, "gemini-2.5-pro cost: {cost}");
+    }
+
+    #[test]
+    fn test_estimate_cost_gemini_25_flash() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // gemini-2.5-flash: $0.15/MTok input, $0.60/MTok output
+        let cost = estimate_cost(&usage, "gemini-2.5-flash").unwrap();
+        assert!((cost - 0.75).abs() < 0.001, "gemini-2.5-flash cost: {cost}");
+    }
+
+    #[test]
+    fn test_estimate_cost_gemini_20_flash() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // gemini-2.0-flash: $0.10/MTok input, $0.40/MTok output
+        let cost = estimate_cost(&usage, "gemini-2.0-flash").unwrap();
+        assert!((cost - 0.50).abs() < 0.001, "gemini-2.0-flash cost: {cost}");
+    }
+
+    // ── DeepSeek pricing tests ───────────────────────────────────────
+
+    #[test]
+    fn test_estimate_cost_deepseek_chat() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // deepseek-chat: $0.27/MTok input, $1.10/MTok output
+        let cost = estimate_cost(&usage, "deepseek-chat").unwrap();
+        assert!((cost - 1.37).abs() < 0.001, "deepseek-chat cost: {cost}");
+    }
+
+    #[test]
+    fn test_estimate_cost_deepseek_reasoner() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // deepseek-reasoner: $0.55/MTok input, $2.19/MTok output
+        let cost = estimate_cost(&usage, "deepseek-reasoner").unwrap();
+        assert!(
+            (cost - 2.74).abs() < 0.001,
+            "deepseek-reasoner cost: {cost}"
+        );
+    }
+
+    // ── Mistral pricing tests ────────────────────────────────────────
+
+    #[test]
+    fn test_estimate_cost_mistral_large() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 100_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // mistral-large: $2.00/MTok input, $6.00/MTok output
+        let cost = estimate_cost(&usage, "mistral-large-latest").unwrap();
+        assert!((cost - 2.6).abs() < 0.001, "mistral-large cost: {cost}");
+    }
+
+    #[test]
+    fn test_estimate_cost_mistral_small() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // mistral-small: $0.10/MTok input, $0.30/MTok output
+        let cost = estimate_cost(&usage, "mistral-small-latest").unwrap();
+        assert!((cost - 0.40).abs() < 0.001, "mistral-small cost: {cost}");
+    }
+
+    #[test]
+    fn test_estimate_cost_codestral() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // codestral: $0.30/MTok input, $0.90/MTok output
+        let cost = estimate_cost(&usage, "codestral-latest").unwrap();
+        assert!((cost - 1.20).abs() < 0.001, "codestral cost: {cost}");
+    }
+
+    // ── xAI (Grok) pricing tests ─────────────────────────────────────
+
+    #[test]
+    fn test_estimate_cost_grok3() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 100_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // grok-3: $3.00/MTok input, $15.00/MTok output
+        let cost = estimate_cost(&usage, "grok-3").unwrap();
+        assert!((cost - 4.5).abs() < 0.001, "grok-3 cost: {cost}");
+    }
+
+    #[test]
+    fn test_estimate_cost_grok3_mini() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // grok-3-mini: $0.30/MTok input, $0.50/MTok output
+        let cost = estimate_cost(&usage, "grok-3-mini").unwrap();
+        assert!((cost - 0.80).abs() < 0.001, "grok-3-mini cost: {cost}");
+    }
+
+    // ── Groq pricing tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_estimate_cost_groq_llama70b() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // llama-3.3-70b on Groq: $0.59/MTok input, $0.79/MTok output
+        let cost = estimate_cost(&usage, "llama-3.3-70b-versatile").unwrap();
+        assert!((cost - 1.38).abs() < 0.001, "llama-3.3-70b cost: {cost}");
+    }
+
+    #[test]
+    fn test_estimate_cost_groq_llama8b() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // llama-3.1-8b on Groq: $0.05/MTok input, $0.08/MTok output
+        let cost = estimate_cost(&usage, "llama-3.1-8b-instant").unwrap();
+        assert!((cost - 0.13).abs() < 0.001, "llama-3.1-8b cost: {cost}");
+    }
+
+    // ── OpenRouter prefix stripping tests ────────────────────────────
+
+    #[test]
+    fn test_estimate_cost_openrouter_anthropic_prefix() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 100_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        // OpenRouter uses "anthropic/claude-sonnet-4-20250514" format
+        let cost = estimate_cost(&usage, "anthropic/claude-sonnet-4-20250514").unwrap();
+        let direct_cost = estimate_cost(&usage, "claude-sonnet-4-20250514").unwrap();
+        assert!(
+            (cost - direct_cost).abs() < 0.001,
+            "OpenRouter prefix should resolve to same pricing"
+        );
+    }
+
+    #[test]
+    fn test_estimate_cost_openrouter_openai_prefix() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 100_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        let cost = estimate_cost(&usage, "openai/gpt-4o").unwrap();
+        let direct_cost = estimate_cost(&usage, "gpt-4o").unwrap();
+        assert!(
+            (cost - direct_cost).abs() < 0.001,
+            "OpenRouter openai/ prefix should resolve to same pricing"
+        );
+    }
+
+    #[test]
+    fn test_estimate_cost_openrouter_google_prefix() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 0,
+            cache_write: 0,
+            total_tokens: 0,
+        };
+        let cost = estimate_cost(&usage, "google/gemini-2.0-flash").unwrap();
+        let direct_cost = estimate_cost(&usage, "gemini-2.0-flash").unwrap();
+        assert!(
+            (cost - direct_cost).abs() < 0.001,
+            "OpenRouter google/ prefix should resolve to same pricing"
+        );
+    }
+
+    // ── Non-caching provider zero cache costs ────────────────────────
+
+    #[test]
+    fn test_non_anthropic_providers_zero_cache_costs() {
+        let usage = yoagent::Usage {
+            input: 1_000_000,
+            output: 1_000_000,
+            cache_read: 500_000,
+            cache_write: 200_000,
+            total_tokens: 0,
+        };
+        // For non-Anthropic models, cache_write and cache_read rates are 0
+        // so even with cache_read/cache_write tokens, those don't add to cost
+        let (_, cw, cr, _) = cost_breakdown(&usage, "gpt-4o").unwrap();
+        assert!(
+            cw.abs() < 0.001 && cr.abs() < 0.001,
+            "Non-Anthropic models should have zero cache costs: cw={cw}, cr={cr}"
+        );
     }
 
     #[test]
