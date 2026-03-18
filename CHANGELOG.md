@@ -6,7 +6,7 @@ This project is a self-evolving coding agent — every change was planned, imple
 
 ## [0.1.0] — Unreleased
 
-The initial release. Everything below was built from scratch over 16 days of autonomous evolution, starting from a 200-line CLI example.
+The initial release. Everything below was built from scratch over 18 days of autonomous evolution, starting from a 200-line CLI example.
 
 ### Added
 
@@ -49,6 +49,7 @@ The initial release. Everything below was built from scratch over 16 days of aut
 - `/git` — shortcuts for `status`, `log`, `diff`, `branch`
 - `/pr` — full PR workflow: `list`, `view`, `create [--draft]`, `diff`, `comment`, `checkout`
 - `/review` — AI-powered code review of staged/unstaged changes against main
+- `/changes` — show files modified (written/edited) during the current session
 
 #### Project Tooling
 - `/health` — run full build/test/clippy/fmt diagnostic for Rust, Node, Python, Go, and Make projects
@@ -78,7 +79,7 @@ The initial release. Everything below was built from scratch over 16 days of aut
 #### Configuration
 - **Config file support** — `.yoyo.toml` (per-project) and `~/.config/yoyo/config.toml` (global)
 - `--model` / `/model` — select or switch models mid-session
-- `--provider` / `/provider` — switch between 10+ provider backends mid-session (Anthropic, OpenAI, Google, Ollama, and more)
+- `--provider` / `/provider` — switch between 11 provider backends mid-session (Anthropic, OpenAI, Google, Ollama, z.ai, and more)
 - `--thinking` / `/think` — toggle extended thinking level
 - `--temperature` — sampling randomness control (0.0–1.0)
 - `--max-tokens` — cap response length
@@ -118,26 +119,26 @@ The initial release. Everything below was built from scratch over 16 days of aut
 
 ### Architecture
 
-The codebase evolved from a single 200-line `main.rs` to 12 focused modules (~14,700 lines):
+The codebase evolved from a single 200-line `main.rs` to 12 focused modules (~17,400 lines):
 
 | Module | Lines | Responsibility |
 |--------|-------|----------------|
-| `main.rs` | ~1,200 | Entry point, tool building, `AgentConfig`, model config |
-| `cli.rs` | ~2,350 | CLI argument parsing, config file loading, conversation bookmarks |
-| `commands.rs` | ~2,930 | Slash command dispatch and grouped `/help` |
-| `commands_git.rs` | ~780 | Git commands: `/diff`, `/commit`, `/pr`, `/review` |
-| `commands_project.rs` | ~1,240 | Project commands: `/health`, `/fix`, `/test`, `/lint`, `/init`, `/index` |
+| `main.rs` | ~1,470 | Entry point, tool building, `AgentConfig`, model config |
+| `cli.rs` | ~2,360 | CLI argument parsing, config file loading, conversation bookmarks |
+| `commands.rs` | ~2,990 | Slash command dispatch and grouped `/help` |
+| `commands_git.rs` | ~1,190 | Git commands: `/diff`, `/commit`, `/pr`, `/review`, `/changes` |
+| `commands_project.rs` | ~1,950 | Project commands: `/health`, `/fix`, `/test`, `/lint`, `/init`, `/index` |
 | `commands_session.rs` | ~465 | Session commands: `/save`, `/load`, `/compact`, `/tokens`, `/cost` |
 | `docs.rs` | ~520 | `/docs` crate API lookup |
-| `format.rs` | ~2,280 | Output formatting, ANSI colors, markdown rendering, syntax highlighting |
+| `format.rs` | ~3,280 | Output formatting, ANSI colors, markdown rendering, syntax highlighting, cost tracking |
 | `git.rs` | ~790 | Git operations: branch detection, diff handling, PR interactions |
 | `memory.rs` | ~375 | Project memory system (`.yoyo/memory.json`) |
-| `prompt.rs` | ~850 | System prompt construction, project context assembly |
-| `repl.rs` | ~860 | REPL loop, input handling, tab completion |
+| `prompt.rs` | ~1,090 | System prompt construction, project context assembly |
+| `repl.rs` | ~880 | REPL loop, input handling, tab completion |
 
 ### Testing
 
-- **619 tests** (552 unit + 67 integration)
+- **800 tests** (733 unit + 67 integration)
 - Integration tests run the actual binary as a subprocess — dogfooding real invocations
 - Coverage includes: CLI flag validation, command parsing, error quality, exit codes, output formatting, edge cases (1000-char model names, Unicode emoji in arguments), project type detection, fuzzy scoring, health checks, git operations, session management, markdown rendering, cost calculation, permission logic, and more
 - Mutation testing infrastructure via `cargo-mutants` with threshold-based pass/fail
@@ -180,5 +181,7 @@ The codebase evolved from a single 200-line `main.rs` to 12 focused modules (~14
 | 14 | Colored edit diffs, conversation bookmarks (`/mark`, `/jump`), argument-aware tab completion, `/index` codebase indexing |
 | 15 | Permission prompts (all tools), project memories (`/remember`, `/memories`, `/forget`), module split (commands→4 files), grouped `/help`, `/provider` |
 | 16 | Auto-save sessions on exit, crash recovery, documentation overhaul, CHANGELOG.md |
+| 17 | True token-by-token streaming fix, multi-provider cost tracking (7 providers), crates.io package rename, pluralization fix, `/changes` command |
+| 18 | z.ai (Zhipu AI) provider support, test backfill for `commands_git` and `commands_project` (1,118 lines of tests) |
 
 [0.1.0]: https://github.com/yologdev/yoyo-evolve/releases/tag/v0.1.0
