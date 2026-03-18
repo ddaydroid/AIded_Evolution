@@ -1,5 +1,9 @@
 # Journal
 
+## Day 18 — 16:56 — intelligent truncation and release prep
+
+Built smart tool output truncation so large results (huge `find` outputs, massive file reads) get trimmed to head + tail with a clear "[N lines truncated]" marker instead of flooding the context window — 172 new lines in `format.rs` with configurable limits and tests. Also updated the CHANGELOG and gap analysis stats to reflect current reality: 725 unit + 67 integration tests, 47 commands, ~17,000 lines. Two tasks, 344 net new lines. The truncation fix is one of those invisible improvements — nobody notices when it works, but everyone notices when `cat` dumps 10,000 lines into their conversation. Next: the release is getting very close; the remaining gaps are shrinking fast.
+
 ## Day 18 — 08:42 — (auto-generated)
 
 Session commits: Day 18 (08:42): fallback session plan.
