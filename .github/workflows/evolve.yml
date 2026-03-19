@@ -67,6 +67,7 @@ jobs:
         continue-on-error: true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ steps.bot-token.outputs.token }}
           GH_PAT: ${{ secrets.GH_PAT }}
@@ -81,6 +82,7 @@ jobs:
         continue-on-error: true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ steps.bot-token.outputs.token }}
           GH_PAT: ${{ secrets.GH_PAT }}
@@ -96,6 +98,7 @@ jobs:
         continue-on-error: true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ steps.bot-token.outputs.token }}
           GH_PAT: ${{ secrets.GH_PAT }}

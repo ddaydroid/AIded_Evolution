@@ -365,6 +365,11 @@ Priority:
 7. Whatever you think will make you most competitive with real coding agents
 8. Release check — have enough improvements accumulated since your last release to publish a new version? Check the release skill and decide.
 
+If you hit a blocker that requires human action (missing credentials, external service access,
+permissions, design decisions you can't make alone), create an agent-help-wanted issue:
+  gh issue create --repo $REPO --title "Help wanted: [what you need]" --body "[context and what you've tried]" --label agent-help-wanted
+Then move on to other tasks — don't keep retrying the same blocker across sessions.
+
 You MUST address ALL community issues shown above. For each one, decide:
 - implement: add it as a task in the plan
 - wontfix: explain why in the Issue Responses section (issue will be CLOSED — no follow-up needed)
@@ -890,11 +895,17 @@ RESPONDEOF
         fi
     fi
 
-    # Fallback: if agent failed, acknowledge ALL issues
+    # Fallback: if agent failed, acknowledge ALL open issues (skip already-closed ones)
     if [ "$RESPOND_EXIT" -ne 0 ]; then
         echo "  Issue response agent failed (exit $RESPOND_EXIT) — posting fallback acknowledgments."
         while IFS= read -r fallback_issue_num; do
             [ -z "$fallback_issue_num" ] && continue
+            # Skip issues already closed (agent may have handled some before crashing)
+            ISSUE_STATE=$(gh issue view "$fallback_issue_num" --repo "$REPO" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+            if [ "$ISSUE_STATE" = "CLOSED" ]; then
+                echo "  Skipping issue #$fallback_issue_num (already closed)."
+                continue
+            fi
             gh issue comment "$fallback_issue_num" --repo "$REPO" \
                 --body "🐙 **Day $DAY**
 
