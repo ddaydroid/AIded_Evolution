@@ -1056,6 +1056,14 @@ pub fn format_edit_diff(old_text: &str, new_text: &str) -> String {
 }
 
 /// Format a human-readable summary for a tool execution.
+///
+/// Each tool gets a concise one-line description showing the key parameters:
+/// - `bash` — `$ <command>` (first line + line count for multi-line scripts)
+/// - `read_file` — `read <path>` with optional `:offset..end` or `(N lines)` range
+/// - `write_file` — `write <path> (N lines)`
+/// - `edit_file` — `edit <path> (old → new lines)`
+/// - `list_files` — `ls <path> (pattern)`
+/// - `search` — `search 'pattern' in <path> (include)`
 pub fn format_tool_summary(tool_name: &str, args: &serde_json::Value) -> String {
     match tool_name {
         "bash" => {
@@ -1063,11 +1071,36 @@ pub fn format_tool_summary(tool_name: &str, args: &serde_json::Value) -> String 
                 .get("command")
                 .and_then(|v| v.as_str())
                 .unwrap_or("...");
-            format!("$ {}", truncate_with_ellipsis(cmd, 80))
+            let line_count = cmd.lines().count();
+            let first_line = cmd.lines().next().unwrap_or("...");
+            if line_count > 1 {
+                format!(
+                    "$ {} ({line_count} lines)",
+                    truncate_with_ellipsis(first_line, 60)
+                )
+            } else {
+                format!("$ {}", truncate_with_ellipsis(cmd, 80))
+            }
         }
         "read_file" => {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-            format!("read {}", path)
+            let offset = args.get("offset").and_then(|v| v.as_u64());
+            let limit = args.get("limit").and_then(|v| v.as_u64());
+            match (offset, limit) {
+                (Some(off), Some(lim)) => {
+                    format!("read {path}:{off}..{}", off + lim)
+                }
+                (Some(off), None) => {
+                    format!("read {path}:{off}..")
+                }
+                (None, Some(lim)) => {
+                    let word = pluralize(lim as usize, "line", "lines");
+                    format!("read {path} ({lim} {word})")
+                }
+                (None, None) => {
+                    format!("read {path}")
+                }
+            }
         }
         "write_file" => {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
@@ -1084,15 +1117,37 @@ pub fn format_tool_summary(tool_name: &str, args: &serde_json::Value) -> String 
         }
         "edit_file" => {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-            format!("edit {}", path)
+            let old_text = args.get("old_text").and_then(|v| v.as_str());
+            let new_text = args.get("new_text").and_then(|v| v.as_str());
+            match (old_text, new_text) {
+                (Some(old), Some(new)) => {
+                    let old_lines = old.lines().count();
+                    let new_lines = new.lines().count();
+                    format!("edit {path} ({old_lines} → {new_lines} lines)")
+                }
+                _ => format!("edit {path}"),
+            }
         }
         "list_files" => {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-            format!("ls {}", path)
+            let pattern = args.get("pattern").and_then(|v| v.as_str());
+            match pattern {
+                Some(pat) => format!("ls {path} ({pat})"),
+                None => format!("ls {path}"),
+            }
         }
         "search" => {
             let pat = args.get("pattern").and_then(|v| v.as_str()).unwrap_or("?");
-            format!("search '{}'", truncate_with_ellipsis(pat, 60))
+            let search_path = args.get("path").and_then(|v| v.as_str());
+            let include = args.get("include").and_then(|v| v.as_str());
+            let mut summary = format!("search '{}'", truncate_with_ellipsis(pat, 60));
+            if let Some(p) = search_path {
+                summary.push_str(&format!(" in {p}"));
+            }
+            if let Some(inc) = include {
+                summary.push_str(&format!(" ({inc})"));
+            }
+            summary
         }
         _ => tool_name.to_string(),
     }
@@ -3142,6 +3197,121 @@ mod tests {
         let args = serde_json::json!({"path": "out.txt"});
         let result = format_tool_summary("write_file", &args);
         assert_eq!(result, "write out.txt");
+    }
+
+    // --- format_tool_summary enriched details ---
+
+    #[test]
+    fn test_format_tool_summary_read_file_with_offset_and_limit() {
+        let args = serde_json::json!({"path": "src/main.rs", "offset": 10, "limit": 50});
+        let result = format_tool_summary("read_file", &args);
+        assert_eq!(result, "read src/main.rs:10..60");
+    }
+
+    #[test]
+    fn test_format_tool_summary_read_file_with_offset_only() {
+        let args = serde_json::json!({"path": "src/main.rs", "offset": 100});
+        let result = format_tool_summary("read_file", &args);
+        assert_eq!(result, "read src/main.rs:100..");
+    }
+
+    #[test]
+    fn test_format_tool_summary_read_file_with_limit_only() {
+        let args = serde_json::json!({"path": "src/main.rs", "limit": 25});
+        let result = format_tool_summary("read_file", &args);
+        assert_eq!(result, "read src/main.rs (25 lines)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_read_file_no_extras() {
+        let args = serde_json::json!({"path": "src/main.rs"});
+        let result = format_tool_summary("read_file", &args);
+        assert_eq!(result, "read src/main.rs");
+    }
+
+    #[test]
+    fn test_format_tool_summary_edit_file_with_text() {
+        let args = serde_json::json!({
+            "path": "foo.rs",
+            "old_text": "fn old() {\n}\n",
+            "new_text": "fn new() {\n    // improved\n    do_stuff();\n}\n"
+        });
+        let result = format_tool_summary("edit_file", &args);
+        assert_eq!(result, "edit foo.rs (2 → 4 lines)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_edit_file_no_text() {
+        let args = serde_json::json!({"path": "foo.rs"});
+        let result = format_tool_summary("edit_file", &args);
+        assert_eq!(result, "edit foo.rs");
+    }
+
+    #[test]
+    fn test_format_tool_summary_edit_file_same_lines() {
+        let args = serde_json::json!({
+            "path": "foo.rs",
+            "old_text": "let x = 1;",
+            "new_text": "let x = 2;"
+        });
+        let result = format_tool_summary("edit_file", &args);
+        assert_eq!(result, "edit foo.rs (1 → 1 lines)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_search_with_path() {
+        let args = serde_json::json!({"pattern": "TODO", "path": "src/"});
+        let result = format_tool_summary("search", &args);
+        assert_eq!(result, "search 'TODO' in src/");
+    }
+
+    #[test]
+    fn test_format_tool_summary_search_with_include() {
+        let args = serde_json::json!({"pattern": "fn main", "include": "*.rs"});
+        let result = format_tool_summary("search", &args);
+        assert_eq!(result, "search 'fn main' (*.rs)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_search_with_path_and_include() {
+        let args = serde_json::json!({"pattern": "test", "path": "src/", "include": "*.rs"});
+        let result = format_tool_summary("search", &args);
+        assert_eq!(result, "search 'test' in src/ (*.rs)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_search_pattern_only() {
+        let args = serde_json::json!({"pattern": "TODO"});
+        let result = format_tool_summary("search", &args);
+        assert_eq!(result, "search 'TODO'");
+    }
+
+    #[test]
+    fn test_format_tool_summary_list_files_with_pattern() {
+        let args = serde_json::json!({"path": "src/", "pattern": "*.rs"});
+        let result = format_tool_summary("list_files", &args);
+        assert_eq!(result, "ls src/ (*.rs)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_list_files_pattern_no_path() {
+        let args = serde_json::json!({"pattern": "*.toml"});
+        let result = format_tool_summary("list_files", &args);
+        assert_eq!(result, "ls . (*.toml)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_bash_multiline_shows_first_line() {
+        let args = serde_json::json!({"command": "cd src\ngrep -r 'test' ."});
+        let result = format_tool_summary("bash", &args);
+        assert!(
+            result.starts_with("$ cd src"),
+            "Should show first line: {result}"
+        );
+        assert!(
+            result.contains("(2 lines)"),
+            "Should indicate line count: {result}"
+        );
     }
 
     // --- pluralize ---
