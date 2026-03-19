@@ -202,6 +202,127 @@ pub fn is_retriable_error(error_msg: &str) -> bool {
     false
 }
 
+/// Diagnose a non-retriable API error and return a user-friendly message
+/// with actionable suggestions. Returns `None` if the error doesn't match
+/// any known pattern (falls back to the raw error display).
+///
+/// Covers three categories:
+/// 1. **Authentication errors** (401/invalid key) — shows which env var to set
+/// 2. **Network errors** (connection refused, DNS, timeout) — suggests retry/checks
+/// 3. **Model not found** (404/invalid model) — suggests known models for the provider
+pub fn diagnose_api_error(error: &str, model: &str) -> Option<String> {
+    let lower = error.to_lowercase();
+    let provider = infer_provider_from_model(model);
+
+    // ── Authentication / API key errors ──────────────────────────────
+    if lower.contains("401")
+        || lower.contains("unauthorized")
+        || lower.contains("invalid api key")
+        || lower.contains("invalid_api_key")
+        || lower.contains("invalid x-api-key")
+        || lower.contains("authentication")
+    {
+        let env_var = crate::cli::provider_api_key_env(&provider).unwrap_or("ANTHROPIC_API_KEY");
+        let config_hint = "Or add api_key to .yoyo.toml, or use --api-key <key>.";
+        let key_set = std::env::var(env_var).is_ok();
+        let status = if key_set {
+            format!("  {env_var} is set but the API rejected it — check the key value.")
+        } else {
+            format!("  {env_var} is not set.")
+        };
+        return Some(format!(
+            "Authentication failed for provider '{provider}'.\n\
+             {status}\n\
+             Set it with: export {env_var}=<your-key>\n\
+             {config_hint}"
+        ));
+    }
+
+    // ── Model not found ─────────────────────────────────────────────
+    if lower.contains("not_found")
+        || lower.contains("model not found")
+        || lower.contains("404")
+        || lower.contains("does not exist")
+        || lower.contains("unknown model")
+        || lower.contains("invalid model")
+        || lower.contains("no such model")
+    {
+        let known = crate::cli::known_models_for_provider(&provider);
+        let mut msg = format!("Model '{model}' was not found by provider '{provider}'.");
+        if !known.is_empty() {
+            msg.push_str("\nAvailable models for this provider:");
+            for m in known {
+                msg.push_str(&format!("\n  • {m}"));
+            }
+            msg.push_str(&format!(
+                "\nSwitch with: /model {} or --model {}",
+                known[0], known[0]
+            ));
+        }
+        return Some(msg);
+    }
+
+    // ── Network / connection errors ─────────────────────────────────
+    if lower.contains("connection refused")
+        || lower.contains("connection reset")
+        || lower.contains("dns")
+        || lower.contains("resolve")
+        || lower.contains("name or service not known")
+        || lower.contains("network is unreachable")
+        || lower.contains("no route to host")
+    {
+        let mut msg = String::from("Network error — could not reach the API.\n");
+        if provider == "ollama" {
+            msg.push_str("  Is Ollama running? Try: ollama serve\n");
+        } else if provider == "custom" {
+            msg.push_str("  Check your --base-url value.\n");
+        } else {
+            msg.push_str(&format!(
+                "  Check your internet connection and that {provider}'s API is reachable.\n"
+            ));
+        }
+        msg.push_str("  You can retry with /retry.");
+        return Some(msg);
+    }
+
+    // ── Permission denied (403) ─────────────────────────────────────
+    if lower.contains("403") || lower.contains("forbidden") || lower.contains("permission denied") {
+        return Some(format!(
+            "Access forbidden (403) from provider '{provider}'.\n\
+             This usually means your API key doesn't have access to model '{model}'.\n\
+             Check your plan/tier with {provider}, or try a different model."
+        ));
+    }
+
+    None
+}
+
+/// Infer the provider name from a model identifier.
+/// Used by `diagnose_api_error` so it doesn't need `provider` threaded through every caller.
+fn infer_provider_from_model(model: &str) -> String {
+    let m = model.to_lowercase();
+    if m.contains("claude") || m.contains("opus") || m.contains("sonnet") || m.contains("haiku") {
+        "anthropic".into()
+    } else if m.starts_with("gpt-") || m.starts_with("o3") || m.starts_with("o4") {
+        "openai".into()
+    } else if m.contains("gemini") {
+        "google".into()
+    } else if m.contains("grok") {
+        "xai".into()
+    } else if m.contains("deepseek") {
+        "deepseek".into()
+    } else if m.contains("mistral") || m.contains("codestral") {
+        "mistral".into()
+    } else if m.contains("llama") || m.contains("mixtral") || m.contains("gemma") {
+        // Could be groq, ollama, or cerebras — default to groq for hosted
+        "groq".into()
+    } else if m.contains("glm") {
+        "zai".into()
+    } else {
+        "anthropic".into() // safe default
+    }
+}
+
 /// Extract a preview of tool result content for display.
 /// Returns an empty string if there's nothing meaningful to show.
 fn tool_result_preview(result: &ToolResult, max_chars: usize) -> String {
@@ -400,7 +521,12 @@ enum PromptResult {
 
 /// Execute a single prompt attempt and process all events.
 /// Returns whether we got a retriable error (so the caller can retry).
-async fn run_prompt_once(agent: &mut Agent, input: &str, changes: &SessionChanges) -> PromptResult {
+async fn run_prompt_once(
+    agent: &mut Agent,
+    input: &str,
+    changes: &SessionChanges,
+    model: &str,
+) -> PromptResult {
     let mut rx = agent.prompt(input).await;
     let mut usage = Usage::default();
     let mut in_text = false;
@@ -546,6 +672,10 @@ async fn run_prompt_once(agent: &mut Agent, input: &str, changes: &SessionChange
                                             retriable_error = Some(err_msg.clone());
                                         } else {
                                             eprintln!("\n{RED}  error: {err_msg}{RESET}");
+                                            // Show diagnostic help for common errors
+                                            if let Some(diagnostic) = diagnose_api_error(err_msg, model) {
+                                                eprintln!("{YELLOW}  💡 {}{RESET}", diagnostic.replace('\n', &format!("\n{YELLOW}     {RESET}")));
+                                            }
                                         }
                                     }
                                 }
@@ -555,6 +685,9 @@ async fn run_prompt_once(agent: &mut Agent, input: &str, changes: &SessionChange
                     AgentEvent::InputRejected { reason } => {
                         if let Some(s) = spinner.take() { s.stop(); }
                         eprintln!("{RED}  input rejected: {reason}{RESET}");
+                        if let Some(diagnostic) = diagnose_api_error(&reason, model) {
+                            eprintln!("{YELLOW}  💡 {}{RESET}", diagnostic.replace('\n', &format!("\n{YELLOW}     {RESET}")));
+                        }
                     }
                     AgentEvent::ProgressMessage { text, .. } => {
                         if let Some(s) = spinner.take() { s.stop(); }
@@ -650,7 +783,7 @@ pub async fn run_prompt_with_changes(
             }
         }
 
-        match run_prompt_once(agent, input, changes).await {
+        match run_prompt_once(agent, input, changes, model).await {
             PromptResult::Done {
                 collected_text: text,
                 usage,
@@ -680,9 +813,15 @@ pub async fn run_prompt_with_changes(
                     );
                     tokio::time::sleep(delay).await;
                 } else {
-                    // Exhausted all retries — show the final error
+                    // Exhausted all retries — show the final error with diagnostic
                     eprintln!("\n{RED}  error: {error_msg}{RESET}");
                     eprintln!("{DIM}  (failed after {} attempts){RESET}", MAX_RETRIES + 1);
+                    if let Some(diagnostic) = diagnose_api_error(&error_msg, model) {
+                        eprintln!(
+                            "{YELLOW}  💡 {}{RESET}",
+                            diagnostic.replace('\n', &format!("\n{YELLOW}     {RESET}"))
+                        );
+                    }
                 }
             }
         }

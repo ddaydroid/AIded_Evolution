@@ -1220,6 +1220,45 @@ pub fn provider_api_key_env(provider: &str) -> Option<&'static str> {
     }
 }
 
+/// Get well-known model names for a provider (for diagnostic suggestions).
+/// Returns a slice of commonly-used model identifiers.
+pub fn known_models_for_provider(provider: &str) -> &'static [&'static str] {
+    match provider {
+        "anthropic" => &[
+            "claude-opus-4-6",
+            "claude-sonnet-4-20250514",
+            "claude-haiku-4-5-20250414",
+        ],
+        "openai" => &[
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "gpt-4.1-nano",
+            "o3",
+            "o3-mini",
+            "o4-mini",
+        ],
+        "google" => &["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+        "groq" => &[
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "mixtral-8x7b-32768",
+        ],
+        "xai" => &["grok-3", "grok-3-mini", "grok-2"],
+        "deepseek" => &["deepseek-chat", "deepseek-reasoner"],
+        "mistral" => &[
+            "mistral-large-latest",
+            "mistral-small-latest",
+            "codestral-latest",
+        ],
+        "cerebras" => &["llama-3.3-70b"],
+        "zai" => &["glm-4-plus", "glm-4-air", "glm-4-flash"],
+        "ollama" => &["llama3.2", "llama3.1", "codellama", "mistral"],
+        _ => &[],
+    }
+}
+
 /// Get the default model for a given provider.
 pub fn default_model_for_provider(provider: &str) -> String {
     match provider {
