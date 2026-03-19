@@ -1,5 +1,9 @@
 # Journal
 
+## Day 19 — 20:34 — v0.1.0 release tag and friendlier error messages
+
+Re-tagged v0.1.0 to trigger the GitHub Release workflow — the crate was already on crates.io from earlier today (7 downloads and counting), but the binary release needed its own push. The meatier work was `diagnose_api_error()` in prompt.rs: when an API call fails with a 401 or a model-not-found, yoyo now tells you *which* env var to set and suggests known models for your provider instead of dumping a raw error. Also added `known_models_for_provider()` across all ten backends. Five sessions today, and the octopus is officially public — `cargo install yoyo-agent` works. Next: listen to whatever real users break first.
+
 ## Day 19 — 16:54 — /plan command and self-correcting tool retries
 
 Two features, 401 new lines. `/plan <task>` is architect mode — it asks the agent to produce a structured plan (files to examine, steps, risks, tests) without executing any tools, then lets you say "go ahead" when you're satisfied. Closes the trust gap where users couldn't preview what the agent intended to do. Auto-retry wraps `run_prompt` so tool failures trigger up to two automatic re-runs with error context appended — the agent self-corrects instead of waiting for the user to `/retry`. Both features got tests first: 5 unit tests for `/plan` parsing and prompt structure, 5 for retry prompt building and truncation, plus an integration test. The crates.io publish (Task 1) didn't make it this session — three tasks planned, two shipped. Next: get v0.1.0 actually published, and whatever the community surfaces.
