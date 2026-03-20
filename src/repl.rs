@@ -501,30 +501,15 @@ pub async fn run_repl(
             s if s == "/add" || s.starts_with("/add ") => {
                 let results = commands::handle_add(input);
                 if !results.is_empty() {
-                    // Build content blocks — text files become Content::Text,
-                    // image files become Content::Image
-                    let mut content_blocks: Vec<yoagent::types::Content> = Vec::new();
+                    // Print summaries
                     for result in &results {
                         match result {
-                            commands::AddResult::Text { summary, content } => {
-                                println!("{summary}");
-                                content_blocks.push(yoagent::types::Content::Text {
-                                    text: content.clone(),
-                                });
-                            }
-                            commands::AddResult::Image {
-                                summary,
-                                data,
-                                mime_type,
-                            } => {
-                                println!("{summary}");
-                                content_blocks.push(yoagent::types::Content::Image {
-                                    data: data.clone(),
-                                    mime_type: mime_type.clone(),
-                                });
-                            }
+                            commands::AddResult::Text { summary, .. } => println!("{summary}"),
+                            commands::AddResult::Image { summary, .. } => println!("{summary}"),
                         }
                     }
+                    // Build content blocks with proper text context for images
+                    let content_blocks = build_add_content_blocks(&results);
                     let word = crate::format::pluralize(results.len(), "file", "files");
                     println!(
                         "{}  ({} {word} added to conversation){}\n",
@@ -686,6 +671,99 @@ pub async fn run_repl(
     commands::auto_save_on_exit(agent);
 
     println!("\n{DIM}  bye 👋{RESET}\n");
+}
+
+/// Build content blocks from `/add` results, ensuring images always have
+/// accompanying text context so the model can see them.
+///
+/// For each `AddResult::Image`, a `Content::Text` label is inserted *before*
+/// the `Content::Image` block (e.g. `"[Image: photo.png (42 KB, image/png)]"`).
+/// If the entire batch contains only images (no text files), a general
+/// introductory text block is prepended at the start.
+pub fn build_add_content_blocks(results: &[commands::AddResult]) -> Vec<yoagent::types::Content> {
+    if results.is_empty() {
+        return Vec::new();
+    }
+
+    let mut blocks: Vec<yoagent::types::Content> = Vec::new();
+
+    let has_text_file = results
+        .iter()
+        .any(|r| matches!(r, commands::AddResult::Text { .. }));
+
+    // If there are only images and no text files, prepend a contextual intro
+    if !has_text_file {
+        blocks.push(yoagent::types::Content::Text {
+            text: "The user is sharing the following image(s) for you to analyze:".to_string(),
+        });
+    }
+
+    for result in results {
+        match result {
+            commands::AddResult::Text { content, .. } => {
+                blocks.push(yoagent::types::Content::Text {
+                    text: content.clone(),
+                });
+            }
+            commands::AddResult::Image {
+                summary,
+                data,
+                mime_type,
+            } => {
+                // Extract a readable label from the summary (which contains the
+                // filename, size, and mime type). The summary looks like:
+                //   "\x1b[32m  ✓ added image photo.png (42 KB, image/png)\x1b[0m"
+                // We extract what's between "added image " and the RESET code,
+                // but if parsing fails, fall back to the mime_type alone.
+                let label = extract_image_label(summary, mime_type);
+                blocks.push(yoagent::types::Content::Text {
+                    text: format!("[Image: {label}]"),
+                });
+                blocks.push(yoagent::types::Content::Image {
+                    data: data.clone(),
+                    mime_type: mime_type.clone(),
+                });
+            }
+        }
+    }
+
+    blocks
+}
+
+/// Extract a human-readable label from an AddResult::Image summary string.
+/// The summary has ANSI codes and looks like:
+///   "\x1b[32m  ✓ added image photo.png (42 KB, image/png)\x1b[0m"
+/// We want: "photo.png (42 KB, image/png)"
+fn extract_image_label(summary: &str, fallback_mime: &str) -> String {
+    // Strip ANSI escape codes first
+    let stripped: String = {
+        let mut out = String::new();
+        let mut in_escape = false;
+        for ch in summary.chars() {
+            if ch == '\x1b' {
+                in_escape = true;
+            } else if in_escape {
+                if ch.is_ascii_alphabetic() {
+                    in_escape = false;
+                }
+            } else {
+                out.push(ch);
+            }
+        }
+        out
+    };
+
+    // Try to find "added image " and extract everything after it
+    if let Some(idx) = stripped.find("added image ") {
+        let after = &stripped[idx + "added image ".len()..];
+        let trimmed = after.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    // Fallback
+    format!("image ({fallback_mime})")
 }
 
 #[cfg(test)]
@@ -945,5 +1023,179 @@ mod tests {
             candidates.contains(&"src/".to_string()),
             "Second arg should use file path completion: {candidates:?}"
         );
+    }
+
+    // ── build_add_content_blocks ─────────────────────────────────────
+
+    #[test]
+    fn add_content_blocks_image_only_has_intro_and_label() {
+        let results = vec![commands::AddResult::Image {
+            summary: "\x1b[32m  ✓ added image photo.png (42 KB, image/png)\x1b[0m".to_string(),
+            data: "base64data".to_string(),
+            mime_type: "image/png".to_string(),
+        }];
+        let blocks = build_add_content_blocks(&results);
+
+        // Should be: intro text, label text, image = 3 blocks
+        assert_eq!(blocks.len(), 3, "expected intro + label + image");
+
+        // First block: introductory text
+        match &blocks[0] {
+            yoagent::types::Content::Text { text } => {
+                assert!(
+                    text.contains("image(s)"),
+                    "intro should mention images: {text}"
+                );
+            }
+            other => panic!("expected Text intro, got {other:?}"),
+        }
+
+        // Second block: image label text
+        match &blocks[1] {
+            yoagent::types::Content::Text { text } => {
+                assert!(
+                    text.starts_with("[Image:"),
+                    "label should start with [Image:: {text}"
+                );
+                assert!(
+                    text.contains("photo.png"),
+                    "label should contain filename: {text}"
+                );
+            }
+            other => panic!("expected Text label, got {other:?}"),
+        }
+
+        // Third block: actual image
+        match &blocks[2] {
+            yoagent::types::Content::Image { data, mime_type } => {
+                assert_eq!(data, "base64data");
+                assert_eq!(mime_type, "image/png");
+            }
+            other => panic!("expected Image, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn add_content_blocks_text_only_no_intro() {
+        let results = vec![commands::AddResult::Text {
+            summary: "added foo.rs".to_string(),
+            content: "fn main() {}".to_string(),
+        }];
+        let blocks = build_add_content_blocks(&results);
+
+        // Text-only: no intro, just the text block
+        assert_eq!(blocks.len(), 1);
+        match &blocks[0] {
+            yoagent::types::Content::Text { text } => {
+                assert_eq!(text, "fn main() {}");
+            }
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn add_content_blocks_mixed_text_and_image() {
+        let results = vec![
+            commands::AddResult::Text {
+                summary: "added main.rs".to_string(),
+                content: "fn main() {}".to_string(),
+            },
+            commands::AddResult::Image {
+                summary: "\x1b[32m  ✓ added image logo.png (10 KB, image/png)\x1b[0m".to_string(),
+                data: "imgdata".to_string(),
+                mime_type: "image/png".to_string(),
+            },
+        ];
+        let blocks = build_add_content_blocks(&results);
+
+        // Mixed: no intro (text file present), text + label + image = 3 blocks
+        assert_eq!(blocks.len(), 3, "expected text + label + image");
+
+        // First: text file content
+        match &blocks[0] {
+            yoagent::types::Content::Text { text } => {
+                assert_eq!(text, "fn main() {}");
+            }
+            other => panic!("expected Text, got {other:?}"),
+        }
+
+        // Second: image label
+        match &blocks[1] {
+            yoagent::types::Content::Text { text } => {
+                assert!(text.starts_with("[Image:"), "label: {text}");
+                assert!(
+                    text.contains("logo.png"),
+                    "label should have filename: {text}"
+                );
+            }
+            other => panic!("expected Text label, got {other:?}"),
+        }
+
+        // Third: image data
+        match &blocks[2] {
+            yoagent::types::Content::Image { data, mime_type } => {
+                assert_eq!(data, "imgdata");
+                assert_eq!(mime_type, "image/png");
+            }
+            other => panic!("expected Image, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn add_content_blocks_multiple_images_each_has_label() {
+        let results = vec![
+            commands::AddResult::Image {
+                summary: "\x1b[32m  ✓ added image a.jpg (5 KB, image/jpeg)\x1b[0m".to_string(),
+                data: "d1".to_string(),
+                mime_type: "image/jpeg".to_string(),
+            },
+            commands::AddResult::Image {
+                summary: "\x1b[32m  ✓ added image b.webp (8 KB, image/webp)\x1b[0m".to_string(),
+                data: "d2".to_string(),
+                mime_type: "image/webp".to_string(),
+            },
+        ];
+        let blocks = build_add_content_blocks(&results);
+
+        // intro + (label + image) × 2 = 5 blocks
+        assert_eq!(blocks.len(), 5, "expected intro + 2×(label+image)");
+
+        // Verify intro
+        assert!(
+            matches!(&blocks[0], yoagent::types::Content::Text { text } if text.contains("image(s)"))
+        );
+
+        // Verify label-then-image ordering for first image
+        assert!(
+            matches!(&blocks[1], yoagent::types::Content::Text { text } if text.contains("a.jpg"))
+        );
+        assert!(matches!(&blocks[2], yoagent::types::Content::Image { data, .. } if data == "d1"));
+
+        // Verify label-then-image ordering for second image
+        assert!(
+            matches!(&blocks[3], yoagent::types::Content::Text { text } if text.contains("b.webp"))
+        );
+        assert!(matches!(&blocks[4], yoagent::types::Content::Image { data, .. } if data == "d2"));
+    }
+
+    #[test]
+    fn add_content_blocks_empty_input() {
+        let blocks = build_add_content_blocks(&[]);
+        assert!(blocks.is_empty(), "empty input should produce empty output");
+    }
+
+    #[test]
+    fn extract_image_label_parses_ansi_summary() {
+        let label = extract_image_label(
+            "\x1b[32m  ✓ added image photo.png (42 KB, image/png)\x1b[0m",
+            "image/png",
+        );
+        assert_eq!(label, "photo.png (42 KB, image/png)");
+    }
+
+    #[test]
+    fn extract_image_label_fallback() {
+        let label = extract_image_label("something unexpected", "image/jpeg");
+        assert_eq!(label, "image (image/jpeg)");
     }
 }
