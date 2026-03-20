@@ -22,6 +22,7 @@
 //!   /commit [msg]   Commit staged changes (AI-generates message if no msg)
 //!   /docs <crate>   Look up docs.rs documentation for a Rust crate
 //!   /docs <c> <i>   Look up a specific item within a crate
+//!   /export [path]  Export conversation as readable markdown
 //!   /find <pattern> Fuzzy-search project files by name
 //!   /fix            Auto-fix build/lint errors (runs checks, sends failures to AI)
 //!   /git <subcmd>   Quick git: status, log, add, diff, branch, stash

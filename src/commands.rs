@@ -27,6 +27,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/commit",
     "/cost",
     "/docs",
+    "/export",
     "/find",
     "/fix",
     "/forget",
@@ -569,6 +570,19 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
              \x20 /web https://docs.rs/serde/latest\n\
              \x20 /web https://rust-lang.org",
         ),
+        "export" => Some(
+            "/export [path] — Export conversation as readable markdown\n\n\
+             Usage:\n\
+             \x20 /export              Export to conversation.md\n\
+             \x20 /export <path>       Export to specified path\n\n\
+             Saves the current conversation as a formatted markdown file.\n\
+             User messages, assistant responses, thinking blocks, and tool\n\
+             results are all included in a readable format.\n\n\
+             Examples:\n\
+             \x20 /export\n\
+             \x20 /export chat-log.md\n\
+             \x20 /export output/session.md",
+        ),
         _ => None,
     }
 }
@@ -599,6 +613,9 @@ pub fn help_text() -> String {
     );
     out.push_str("  /marks             List all saved bookmarks\n");
     out.push_str("  /changes           Show files modified (written/edited) during this session\n");
+    out.push_str(
+        "  /export [path]     Export conversation as readable markdown (default: conversation.md)\n",
+    );
     out.push('\n');
 
     // ── Git ──
@@ -986,8 +1003,8 @@ pub use crate::commands_project::{
 
 // Session-related handlers
 pub use crate::commands_session::{
-    auto_compact_if_needed, auto_save_on_exit, handle_compact, handle_history, handle_jump,
-    handle_load, handle_mark, handle_marks, handle_save, handle_search, handle_spawn,
+    auto_compact_if_needed, auto_save_on_exit, handle_compact, handle_export, handle_history,
+    handle_jump, handle_load, handle_mark, handle_marks, handle_save, handle_search, handle_spawn,
     last_session_exists, Bookmarks,
 };
 

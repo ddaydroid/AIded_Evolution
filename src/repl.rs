@@ -456,6 +456,10 @@ pub async fn run_repl(
                 commands::handle_changes(&session_changes);
                 continue;
             }
+            s if s == "/export" || s.starts_with("/export ") => {
+                commands::handle_export(agent, input);
+                continue;
+            }
             s if s == "/mark" || s.starts_with("/mark ") => {
                 commands::handle_mark(agent, input, &mut bookmarks);
                 continue;

@@ -1,5 +1,5 @@
 //! Session-related command handlers: /save, /load, /compact, /history, /search,
-//! /mark, /jump, /marks, /spawn.
+//! /mark, /jump, /marks, /spawn, /export.
 
 use crate::format::*;
 use crate::prompt::*;
@@ -7,6 +7,7 @@ use crate::prompt::*;
 use std::collections::HashMap;
 use yoagent::agent::Agent;
 use yoagent::context::{compact_messages, total_tokens, ContextConfig};
+use yoagent::types::{AgentMessage, Content, Message};
 use yoagent::*;
 
 use crate::cli::{
@@ -365,6 +366,105 @@ pub async fn handle_spawn(
     Some(context_msg)
 }
 
+// ── /export ───────────────────────────────────────────────────────────────
+
+/// Default export file path.
+const DEFAULT_EXPORT_PATH: &str = "conversation.md";
+
+/// Format a conversation as readable markdown.
+///
+/// For each message:
+/// - User messages → `## User\n\n{text}\n\n`
+/// - Assistant messages → `## Assistant\n\n{text}\n\n` (text and thinking blocks, skips tool calls)
+/// - Tool results → `### Tool: {name}\n\n```\n{output}\n```\n\n`
+pub fn format_conversation_as_markdown(messages: &[AgentMessage]) -> String {
+    let mut out = String::new();
+    out.push_str("# Conversation\n\n");
+
+    for msg in messages {
+        match msg {
+            AgentMessage::Llm(Message::User { content, .. }) => {
+                out.push_str("## User\n\n");
+                for c in content {
+                    if let Content::Text { text } = c {
+                        out.push_str(text);
+                        out.push_str("\n\n");
+                    }
+                }
+            }
+            AgentMessage::Llm(Message::Assistant { content, .. }) => {
+                out.push_str("## Assistant\n\n");
+                for c in content {
+                    match c {
+                        Content::Text { text } if !text.is_empty() => {
+                            out.push_str(text);
+                            out.push_str("\n\n");
+                        }
+                        Content::Thinking { thinking, .. } if !thinking.is_empty() => {
+                            out.push_str("*Thinking:*\n\n> ");
+                            // Indent thinking text as a blockquote
+                            out.push_str(&thinking.replace('\n', "\n> "));
+                            out.push_str("\n\n");
+                        }
+                        _ => {} // skip tool calls, empty text/thinking
+                    }
+                }
+            }
+            AgentMessage::Llm(Message::ToolResult {
+                tool_name, content, ..
+            }) => {
+                out.push_str(&format!("### Tool: {tool_name}\n\n"));
+                let text: String = content
+                    .iter()
+                    .filter_map(|c| match c {
+                        Content::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !text.is_empty() {
+                    out.push_str("```\n");
+                    out.push_str(&text);
+                    out.push_str("\n```\n\n");
+                }
+            }
+            AgentMessage::Extension(_) => {} // skip extension messages
+        }
+    }
+
+    out
+}
+
+/// Parse the export path from `/export [path]` input.
+pub fn parse_export_path(input: &str) -> &str {
+    let path = input.strip_prefix("/export").unwrap_or("").trim();
+    if path.is_empty() {
+        DEFAULT_EXPORT_PATH
+    } else {
+        path
+    }
+}
+
+/// Handle `/export [path]`: save the current conversation as a readable markdown file.
+pub fn handle_export(agent: &Agent, input: &str) {
+    let path = parse_export_path(input);
+    let messages = agent.messages();
+
+    if messages.is_empty() {
+        println!("{DIM}  (no messages to export){RESET}\n");
+        return;
+    }
+
+    let markdown = format_conversation_as_markdown(messages);
+    match std::fs::write(path, &markdown) {
+        Ok(_) => println!(
+            "{GREEN}  ✓ conversation exported to {path} ({} messages){RESET}\n",
+            messages.len()
+        ),
+        Err(e) => eprintln!("{RED}  error writing to {path}: {e}{RESET}\n"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,5 +563,146 @@ mod tests {
 
         std::env::set_current_dir(&original_dir).unwrap();
         let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    // ── /export tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_format_conversation_as_markdown_empty() {
+        let messages: Vec<AgentMessage> = vec![];
+        let md = format_conversation_as_markdown(&messages);
+        assert_eq!(md, "# Conversation\n\n");
+    }
+
+    #[test]
+    fn test_format_conversation_as_markdown_user_message() {
+        let messages = vec![AgentMessage::Llm(Message::user("Hello, world!"))];
+        let md = format_conversation_as_markdown(&messages);
+        assert!(md.contains("## User"));
+        assert!(md.contains("Hello, world!"));
+    }
+
+    #[test]
+    fn test_format_conversation_as_markdown_mixed_messages() {
+        let messages = vec![
+            AgentMessage::Llm(Message::user("What is 2+2?")),
+            AgentMessage::Llm(Message::Assistant {
+                content: vec![Content::Text {
+                    text: "The answer is 4.".to_string(),
+                }],
+                stop_reason: yoagent::types::StopReason::Stop,
+                model: "test".to_string(),
+                provider: "test".to_string(),
+                usage: Usage::default(),
+                timestamp: 0,
+                error_message: None,
+            }),
+            AgentMessage::Llm(Message::ToolResult {
+                tool_call_id: "tc_1".to_string(),
+                tool_name: "bash".to_string(),
+                content: vec![Content::Text {
+                    text: "file.txt".to_string(),
+                }],
+                is_error: false,
+                timestamp: 0,
+            }),
+        ];
+        let md = format_conversation_as_markdown(&messages);
+        assert!(md.contains("## User"), "Should have user heading");
+        assert!(md.contains("What is 2+2?"), "Should have user text");
+        assert!(md.contains("## Assistant"), "Should have assistant heading");
+        assert!(
+            md.contains("The answer is 4."),
+            "Should have assistant text"
+        );
+        assert!(md.contains("### Tool: bash"), "Should have tool heading");
+        assert!(md.contains("file.txt"), "Should have tool output");
+        assert!(md.contains("```"), "Tool output should be in code block");
+    }
+
+    #[test]
+    fn test_format_conversation_as_markdown_thinking_block() {
+        let messages = vec![AgentMessage::Llm(Message::Assistant {
+            content: vec![
+                Content::Thinking {
+                    thinking: "Let me think about this.".to_string(),
+                    signature: None,
+                },
+                Content::Text {
+                    text: "Here's my answer.".to_string(),
+                },
+            ],
+            stop_reason: yoagent::types::StopReason::Stop,
+            model: "test".to_string(),
+            provider: "test".to_string(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+        })];
+        let md = format_conversation_as_markdown(&messages);
+        assert!(md.contains("*Thinking:*"), "Should contain thinking label");
+        assert!(
+            md.contains("Let me think about this."),
+            "Should contain thinking text"
+        );
+        assert!(
+            md.contains("Here's my answer."),
+            "Should contain response text"
+        );
+    }
+
+    #[test]
+    fn test_format_conversation_as_markdown_skips_tool_calls() {
+        let messages = vec![AgentMessage::Llm(Message::Assistant {
+            content: vec![
+                Content::Text {
+                    text: "I'll check that.".to_string(),
+                },
+                Content::ToolCall {
+                    id: "tc_1".to_string(),
+                    name: "bash".to_string(),
+                    arguments: serde_json::json!({"command": "ls"}),
+                },
+            ],
+            stop_reason: yoagent::types::StopReason::Stop,
+            model: "test".to_string(),
+            provider: "test".to_string(),
+            usage: Usage::default(),
+            timestamp: 0,
+            error_message: None,
+        })];
+        let md = format_conversation_as_markdown(&messages);
+        assert!(
+            md.contains("I'll check that."),
+            "Should include text blocks"
+        );
+        // Tool calls should not appear as raw JSON in the output
+        assert!(
+            !md.contains("\"command\""),
+            "Should not include tool call arguments"
+        );
+    }
+
+    #[test]
+    fn test_parse_export_path_default() {
+        assert_eq!(parse_export_path("/export"), "conversation.md");
+    }
+
+    #[test]
+    fn test_parse_export_path_custom() {
+        assert_eq!(parse_export_path("/export myfile.md"), "myfile.md");
+    }
+
+    #[test]
+    fn test_parse_export_path_with_directory() {
+        assert_eq!(
+            parse_export_path("/export output/chat.md"),
+            "output/chat.md"
+        );
+    }
+
+    #[test]
+    fn test_parse_export_path_whitespace() {
+        assert_eq!(parse_export_path("/export   notes.md  "), "notes.md");
     }
 }
