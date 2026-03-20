@@ -92,6 +92,10 @@ pub struct PromptOutcome {
     /// The last tool error encountered during this prompt turn, if any.
     /// Tool errors are from `ToolExecutionEnd` events where `is_error` is true.
     pub last_tool_error: Option<String>,
+    /// Whether this prompt triggered an auto-compact due to context overflow.
+    /// Callers can use this to inform users or adjust behavior.
+    #[allow(dead_code)]
+    pub was_overflow: bool,
 }
 
 /// Build a retry prompt that includes error context from a previous failed attempt.
@@ -133,6 +137,50 @@ pub fn build_auto_retry_prompt(original_input: &str, tool_error: &str, attempt: 
     format!(
         "[Auto-retry {attempt}/{MAX_AUTO_RETRIES}: a tool failed with: {summary}. \
          Try a different approach or fix the error.]\n\n{original_input}"
+    )
+}
+
+/// Known phrases that indicate context overflow across LLM providers.
+/// Mirrors the upstream yoagent patterns so we can detect overflow from
+/// error *strings* (e.g., in RetriableError messages or raw API output)
+/// even when the structured `ProviderError::ContextOverflow` isn't available.
+const OVERFLOW_PHRASES: &[&str] = &[
+    "prompt is too long",
+    "input is too long",
+    "exceeds the context window",
+    "exceeds the maximum",
+    "maximum prompt length",
+    "reduce the length of the messages",
+    "maximum context length",
+    "exceeds the limit of",
+    "exceeds the available context size",
+    "greater than the context length",
+    "context window exceeds limit",
+    "exceeded model token limit",
+    "context length exceeded",
+    "context_length_exceeded",
+    "too many tokens",
+    "token limit exceeded",
+];
+
+/// Check if an error message indicates a context overflow / prompt-too-long error.
+///
+/// Works on raw error strings — useful when we only have the text, not a
+/// structured `ProviderError`. Case-insensitive.
+pub fn is_overflow_error(msg: &str) -> bool {
+    if msg.is_empty() {
+        return false;
+    }
+    let lower = msg.to_lowercase();
+    OVERFLOW_PHRASES.iter().any(|phrase| lower.contains(phrase))
+}
+
+/// Build a retry prompt after auto-compacting due to context overflow.
+/// Tells the model the context was compacted so it can re-orient.
+pub fn build_overflow_retry_prompt(original_input: &str) -> String {
+    format!(
+        "[Context was auto-compacted because the conversation exceeded the model's token limit. \
+         Earlier messages have been summarized. Please continue with the task.]\n\n{original_input}"
     )
 }
 
@@ -517,6 +565,8 @@ enum PromptResult {
     },
     /// A retriable API error was detected — caller should retry.
     RetriableError { error_msg: String, usage: Usage },
+    /// A context overflow error — caller should compact and retry.
+    ContextOverflow { error_msg: String, usage: Usage },
 }
 
 /// Execute a single prompt attempt and process all events.
@@ -533,6 +583,7 @@ async fn run_prompt_once(
     let mut tool_timers: HashMap<String, Instant> = HashMap::new();
     let mut collected_text = String::new();
     let mut retriable_error: Option<String> = None;
+    let mut overflow_error: Option<String> = None;
     let mut last_tool_error: Option<String> = None;
     let mut md_renderer = MarkdownRenderer::new();
     let mut spinner: Option<Spinner> = Some(Spinner::start());
@@ -667,8 +718,11 @@ async fn run_prompt_once(
                                             println!();
                                             in_text = false;
                                         }
-                                        // Check if this error is worth retrying
-                                        if is_retriable_error(err_msg) {
+                                        // Check for context overflow first — needs special handling
+                                        if is_overflow_error(err_msg) {
+                                            overflow_error = Some(err_msg.clone());
+                                        } else if is_retriable_error(err_msg) {
+                                            // Check if this error is worth retrying
                                             retriable_error = Some(err_msg.clone());
                                         } else {
                                             eprintln!("\n{RED}  error: {err_msg}{RESET}");
@@ -733,7 +787,12 @@ async fn run_prompt_once(
         println!();
     }
 
-    if let Some(err_msg) = retriable_error {
+    if let Some(err_msg) = overflow_error {
+        PromptResult::ContextOverflow {
+            error_msg: err_msg,
+            usage,
+        }
+    } else if let Some(err_msg) = retriable_error {
         PromptResult::RetriableError {
             error_msg: err_msg,
             usage,
@@ -771,6 +830,7 @@ pub async fn run_prompt_with_changes(
     let mut total_usage = Usage::default();
     let mut collected_text = String::new();
     let mut last_tool_error: Option<String> = None;
+    let mut did_overflow_compact = false;
 
     // Save message state before the first attempt so we can restore on retry
     let saved_state = agent.save_messages().ok();
@@ -824,6 +884,68 @@ pub async fn run_prompt_with_changes(
                     }
                 }
             }
+            PromptResult::ContextOverflow { error_msg, usage } => {
+                total_usage.input += usage.input;
+                total_usage.output += usage.output;
+                total_usage.cache_read += usage.cache_read;
+                total_usage.cache_write += usage.cache_write;
+
+                // Auto-compact and retry once
+                eprintln!(
+                    "\n{YELLOW}  ⚡ context overflow detected — auto-compacting and retrying...{RESET}"
+                );
+                eprintln!("{DIM}  ({error_msg}){RESET}");
+
+                if let Some(ref json) = saved_state {
+                    let _ = agent.restore_messages(json);
+                }
+                if let Some((before_count, before_tokens, after_count, after_tokens)) =
+                    crate::commands_session::compact_agent(agent)
+                {
+                    eprintln!(
+                        "{DIM}  compacted: {before_count} → {after_count} messages, ~{} → ~{} tokens{RESET}",
+                        crate::format::format_token_count(before_tokens),
+                        crate::format::format_token_count(after_tokens)
+                    );
+                }
+
+                did_overflow_compact = true;
+
+                // Retry with the compacted context
+                let retry_input = build_overflow_retry_prompt(input);
+                match run_prompt_once(agent, &retry_input, changes, model).await {
+                    PromptResult::Done {
+                        collected_text: text,
+                        usage: retry_usage,
+                        last_tool_error: tool_err,
+                    } => {
+                        total_usage.input += retry_usage.input;
+                        total_usage.output += retry_usage.output;
+                        total_usage.cache_read += retry_usage.cache_read;
+                        total_usage.cache_write += retry_usage.cache_write;
+                        collected_text = text;
+                        last_tool_error = tool_err;
+                    }
+                    PromptResult::RetriableError {
+                        error_msg: retry_err,
+                        usage: retry_usage,
+                    }
+                    | PromptResult::ContextOverflow {
+                        error_msg: retry_err,
+                        usage: retry_usage,
+                    } => {
+                        total_usage.input += retry_usage.input;
+                        total_usage.output += retry_usage.output;
+                        total_usage.cache_read += retry_usage.cache_read;
+                        total_usage.cache_write += retry_usage.cache_write;
+                        eprintln!("\n{RED}  error: {retry_err}{RESET}");
+                        eprintln!(
+                            "{DIM}  (overflow retry also failed — try /compact manually){RESET}"
+                        );
+                    }
+                }
+                break;
+            }
         }
     }
 
@@ -836,6 +958,7 @@ pub async fn run_prompt_with_changes(
     PromptOutcome {
         text: collected_text,
         last_tool_error,
+        was_overflow: did_overflow_compact,
     }
 }
 
@@ -1376,5 +1499,90 @@ mod tests {
     #[test]
     fn test_max_auto_retries_constant() {
         assert_eq!(MAX_AUTO_RETRIES, 2);
+    }
+
+    // ── Context overflow detection tests ─────────────────────────────────
+
+    #[test]
+    fn test_is_overflow_error_anthropic() {
+        assert!(is_overflow_error(
+            "prompt is too long: 213462 tokens > 200000 maximum"
+        ));
+    }
+
+    #[test]
+    fn test_is_overflow_error_openai() {
+        assert!(is_overflow_error(
+            "Your input exceeds the context window of this model"
+        ));
+    }
+
+    #[test]
+    fn test_is_overflow_error_google() {
+        assert!(is_overflow_error(
+            "The input token count (1196265) exceeds the maximum number of tokens allowed"
+        ));
+    }
+
+    #[test]
+    fn test_is_overflow_error_generic_too_many_tokens() {
+        assert!(is_overflow_error("too many tokens in request"));
+    }
+
+    #[test]
+    fn test_is_overflow_error_context_length_exceeded() {
+        assert!(is_overflow_error("context length exceeded"));
+        assert!(is_overflow_error("context_length_exceeded"));
+    }
+
+    #[test]
+    fn test_is_overflow_error_max_token_exceeded() {
+        assert!(is_overflow_error(
+            "exceeded model token limit for this request"
+        ));
+        assert!(is_overflow_error("token limit exceeded"));
+    }
+
+    #[test]
+    fn test_is_overflow_error_case_insensitive() {
+        assert!(is_overflow_error("PROMPT IS TOO LONG"));
+        assert!(is_overflow_error("Too Many Tokens"));
+        assert!(is_overflow_error("CONTEXT LENGTH EXCEEDED"));
+    }
+
+    #[test]
+    fn test_is_overflow_error_bedrock() {
+        assert!(is_overflow_error("input is too long for requested model"));
+    }
+
+    #[test]
+    fn test_is_overflow_error_groq() {
+        assert!(is_overflow_error(
+            "Please reduce the length of the messages or completion"
+        ));
+    }
+
+    #[test]
+    fn test_is_overflow_error_xai() {
+        assert!(is_overflow_error(
+            "This model's maximum prompt length is 131072 but request contains 537812 tokens"
+        ));
+    }
+
+    #[test]
+    fn test_is_not_overflow_error() {
+        assert!(!is_overflow_error("invalid api key"));
+        assert!(!is_overflow_error("rate limit exceeded"));
+        assert!(!is_overflow_error("500 Internal Server Error"));
+        assert!(!is_overflow_error("connection reset"));
+        assert!(!is_overflow_error("bad request"));
+        assert!(!is_overflow_error(""));
+    }
+
+    #[test]
+    fn test_build_overflow_retry_prompt() {
+        let prompt = build_overflow_retry_prompt("explain the code");
+        assert!(prompt.contains("explain the code"));
+        assert!(prompt.contains("auto-compacted"));
     }
 }

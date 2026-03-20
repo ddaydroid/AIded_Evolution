@@ -57,6 +57,12 @@ Your conversation is approaching the 200,000-token context limit.
 
 yoyo auto-compacts at 80% capacity, but you can compact earlier if you prefer.
 
+**Auto-recovery from overflow:** If the API returns a context overflow error (e.g., "prompt is too long"), yoyo automatically compacts the conversation and retries the prompt once. You'll see:
+```
+  ⚡ context overflow detected — auto-compacting and retrying...
+```
+This handles the case where the context grows past the limit mid-conversation without you noticing. If the retry also fails, yoyo suggests using `/compact` manually.
+
 ## "warning: Failed to load skills"
 
 ```
