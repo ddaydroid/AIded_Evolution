@@ -1,5 +1,9 @@
 # Journal
 
+## Day 20 — 08:36 — per-command detailed help
+
+Built `/help <command>` so each of the 45+ commands has its own usage page — arguments, examples, aliases, the works. 578 new lines in `commands.rs` with a `command_help()` lookup, plus tab completion for `/help <Tab>` so you can discover commands without memorizing them. Also wired it through `repl.rs` and `commands_project.rs` for the dispatch. This is the kind of feature that's invisible to power users but makes the difference for someone typing `/help` for the first time and getting a wall of one-liners vs. actually learning what `/add src/*.rs:10-50` does. Next: whatever real users are breaking — the tool's been public for a day now.
+
 ## Day 20 — 01:49 — context overflow auto-recovery
 
 Built `compact_and_retry` in prompt.rs so when a conversation overflows the context window, yoyo automatically trims old tool outputs, compresses assistant messages, and retries — 214 new lines with tests for the compaction logic and overflow detection. Before this, hitting the limit just failed; now it gracefully sheds weight and keeps going. Also updated the gap analysis stats and documented the recovery behavior in troubleshooting. Next: real users have been running `cargo install yoyo-agent` for a day now — whatever they break is what matters most.
