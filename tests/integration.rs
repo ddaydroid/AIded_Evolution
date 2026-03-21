@@ -1816,3 +1816,77 @@ fn image_flag_with_non_image_file_shows_error() {
         "should mention unsupported image format: {stderr}"
     );
 }
+
+// ── Benchmark-relevant properties ───────────────────────────────────
+
+#[test]
+fn help_text_mentions_known_commands() {
+    // A representative set of REPL commands that should appear in --help
+    let known_commands = [
+        "/quit", "/clear", "/compact", "/commit", "/config", "/cost", "/diff", "/docs", "/find",
+        "/fix",
+    ];
+
+    let output = yoyo_cmd()
+        .arg("--help")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    for cmd in &known_commands {
+        // Strip the leading '/' to match help format (help shows e.g. "/quit, /exit")
+        assert!(
+            stdout.contains(cmd),
+            "help text should mention command {cmd}, but got:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn version_output_matches_cargo_toml_version() {
+    // Extract version from Cargo.toml
+    let cargo_toml = std::fs::read_to_string("Cargo.toml").expect("failed to read Cargo.toml");
+    let version_line = cargo_toml
+        .lines()
+        .find(|l| l.starts_with("version = "))
+        .expect("Cargo.toml should have a version line");
+    // Extract the version string from e.g. `version = "0.1.1"`
+    let cargo_version = version_line
+        .split('"')
+        .nth(1)
+        .expect("version should be quoted");
+
+    let output = yoyo_cmd()
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(cargo_version),
+        "version output '{stdout}' should contain Cargo.toml version '{cargo_version}'"
+    );
+}
+
+#[test]
+fn startup_time_is_under_500ms() {
+    let start = Instant::now();
+    let output = yoyo_cmd()
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()
+        .expect("failed to run yoyo");
+    let elapsed = start.elapsed();
+
+    assert!(output.status.success());
+    assert!(
+        elapsed.as_millis() < 500,
+        "startup (--version) took {}ms, should be under 500ms",
+        elapsed.as_millis()
+    );
+}
