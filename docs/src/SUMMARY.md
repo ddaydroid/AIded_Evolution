@@ -30,6 +30,10 @@
 - [Git Integration](./features/git.md)
 - [Cost Tracking](./features/cost-tracking.md)
 
+# Architecture
+
+- [Architecture Overview](./architecture.md)
+
 # Contributing
 
 - [Mutation Testing](./contributing/mutation-testing.md)
