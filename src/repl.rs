@@ -2,8 +2,8 @@
 
 use crate::cli::*;
 use crate::commands::{
-    self, auto_compact_if_needed, command_arg_completions, is_unknown_command, thinking_level_name,
-    KNOWN_COMMANDS,
+    self, auto_compact_if_needed, clear_confirmation_message, command_arg_completions,
+    is_unknown_command, thinking_level_name, KNOWN_COMMANDS,
 };
 use crate::format::*;
 use crate::git::*;
@@ -332,9 +332,34 @@ pub async fn run_repl(
                 continue;
             }
             "/clear" => {
+                let messages = agent.messages();
+                let msg_count = messages.len();
+                let token_count = yoagent::context::total_tokens(messages) as u64;
+                if let Some(prompt) = clear_confirmation_message(msg_count, token_count) {
+                    use std::io::Write;
+                    print!("{DIM}  {prompt}{RESET}");
+                    let _ = std::io::stdout().flush();
+                    let mut answer = String::new();
+                    if std::io::stdin().read_line(&mut answer).is_ok() {
+                        let answer = answer.trim().to_lowercase();
+                        if answer != "y" && answer != "yes" {
+                            println!("{DIM}  (clear cancelled){RESET}\n");
+                            continue;
+                        }
+                    } else {
+                        println!("{DIM}  (clear cancelled){RESET}\n");
+                        continue;
+                    }
+                }
                 *agent = agent_config.build_agent();
                 session_changes.clear();
                 println!("{DIM}  (conversation cleared){RESET}\n");
+                continue;
+            }
+            "/clear!" => {
+                *agent = agent_config.build_agent();
+                session_changes.clear();
+                println!("{DIM}  (conversation force-cleared){RESET}\n");
                 continue;
             }
             "/model" => {

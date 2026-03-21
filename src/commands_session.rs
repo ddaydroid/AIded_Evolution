@@ -465,6 +465,23 @@ pub fn handle_export(agent: &Agent, input: &str) {
     }
 }
 
+// ── clear confirmation ──────────────────────────────────────────────────
+
+/// Build a confirmation prompt for `/clear` when the conversation has significant history.
+///
+/// Returns `None` if the message count is ≤ 4 (clear immediately, no prompt needed).
+/// Returns `Some(prompt_string)` if confirmation should be requested.
+pub fn clear_confirmation_message(message_count: usize, token_count: u64) -> Option<String> {
+    if message_count <= 4 {
+        return None;
+    }
+    Some(format!(
+        "Clear {} messages (~{} tokens)? [y/N] ",
+        message_count,
+        format_token_count(token_count)
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -704,5 +721,57 @@ mod tests {
     #[test]
     fn test_parse_export_path_whitespace() {
         assert_eq!(parse_export_path("/export   notes.md  "), "notes.md");
+    }
+
+    // ── clear confirmation tests ────────────────────────────────────────
+
+    #[test]
+    fn test_clear_confirmation_empty_conversation() {
+        assert_eq!(clear_confirmation_message(0, 0), None);
+    }
+
+    #[test]
+    fn test_clear_confirmation_at_threshold() {
+        assert_eq!(clear_confirmation_message(4, 1000), None);
+    }
+
+    #[test]
+    fn test_clear_confirmation_above_threshold_contains_count() {
+        let msg = clear_confirmation_message(10, 5000);
+        assert!(msg.is_some(), "should prompt for 10 messages");
+        let text = msg.unwrap();
+        assert!(
+            text.contains("10 messages"),
+            "should mention message count: {text}"
+        );
+    }
+
+    #[test]
+    fn test_clear_confirmation_above_threshold_contains_tokens() {
+        let msg = clear_confirmation_message(10, 5000);
+        assert!(msg.is_some());
+        let text = msg.unwrap();
+        assert!(
+            text.contains("5.0k"),
+            "should contain formatted token count: {text}"
+        );
+    }
+
+    #[test]
+    fn test_clear_confirmation_just_above_threshold() {
+        let msg = clear_confirmation_message(5, 200);
+        assert!(msg.is_some(), "5 messages should trigger confirmation");
+        let text = msg.unwrap();
+        assert!(text.contains("5 messages"));
+        assert!(text.contains("200"));
+    }
+
+    #[test]
+    fn test_clear_force_in_known_commands() {
+        use crate::commands::KNOWN_COMMANDS;
+        assert!(
+            KNOWN_COMMANDS.contains(&"/clear!"),
+            "/clear! should be in KNOWN_COMMANDS"
+        );
     }
 }

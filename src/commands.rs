@@ -23,6 +23,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/quit",
     "/exit",
     "/clear",
+    "/clear!",
     "/compact",
     "/commit",
     "/cost",
@@ -211,8 +212,15 @@ pub fn command_help(cmd: &str) -> Option<&'static str> {
         "clear" => Some(
             "/clear — Clear conversation history\n\n\
              Resets the conversation to a fresh state, removing all messages.\n\
+             If the conversation has more than 4 messages, asks for confirmation.\n\
              The system prompt and loaded context are preserved.\n\
-             Session cost tracking continues.",
+             Session cost tracking continues.\n\n\
+             See also: /clear! (skip confirmation)",
+        ),
+        "clear!" => Some(
+            "/clear! — Force-clear conversation history\n\n\
+             Same as /clear but skips the confirmation prompt.\n\
+             Always clears immediately regardless of message count.",
         ),
         "compact" => Some(
             "/compact — Compact conversation to save context space\n\n\
@@ -595,7 +603,8 @@ pub fn help_text() -> String {
     out.push_str("  ── Session ──\n");
     out.push_str("  /help              Show this help\n");
     out.push_str("  /quit, /exit       Exit yoyo\n");
-    out.push_str("  /clear             Clear conversation history\n");
+    out.push_str("  /clear             Clear conversation history (confirms if >4 messages)\n");
+    out.push_str("  /clear!            Force-clear without confirmation\n");
     out.push_str("  /compact           Compact conversation to save context space\n");
     out.push_str("  /save [path]       Save session to file (default: yoyo-session.json)\n");
     out.push_str("  /load [path]       Load session from file\n");
@@ -1003,9 +1012,9 @@ pub use crate::commands_project::{
 
 // Session-related handlers
 pub use crate::commands_session::{
-    auto_compact_if_needed, auto_save_on_exit, handle_compact, handle_export, handle_history,
-    handle_jump, handle_load, handle_mark, handle_marks, handle_save, handle_search, handle_spawn,
-    last_session_exists, Bookmarks,
+    auto_compact_if_needed, auto_save_on_exit, clear_confirmation_message, handle_compact,
+    handle_export, handle_history, handle_jump, handle_load, handle_mark, handle_marks,
+    handle_save, handle_search, handle_spawn, last_session_exists, Bookmarks,
 };
 
 // Memory-related handlers
