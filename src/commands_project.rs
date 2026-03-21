@@ -1843,6 +1843,156 @@ pub fn handle_add(input: &str) -> Vec<AddResult> {
     results
 }
 
+// ── @file mention expansion ──────────────────────────────────────────
+
+/// Scan user input for `@path` mentions (e.g. `@src/main.rs` or
+/// `@src/cli.rs:50-100`) and resolve them to file contents.
+///
+/// Returns:
+/// - The cleaned prompt text (with resolved `@path` replaced by just the filename)
+/// - A vec of `AddResult` items for every file that was successfully read
+///
+/// Mentions that don't resolve to an existing file are left unchanged
+/// (they might be usernames or other references). Email-like patterns
+/// (`word@domain`) are skipped.
+pub fn expand_file_mentions(input: &str) -> (String, Vec<AddResult>) {
+    let mut results = Vec::new();
+    let mut output = String::with_capacity(input.len());
+    let chars: Vec<char> = input.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        if chars[i] != '@' {
+            output.push(chars[i]);
+            i += 1;
+            continue;
+        }
+
+        // Found an '@'. Check if it's email-like (preceded by an alphanumeric char).
+        if i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '.' || chars[i - 1] == '_') {
+            // Email-like: word@domain — leave it alone
+            output.push('@');
+            i += 1;
+            continue;
+        }
+
+        // Collect the path after '@': alphanumeric, '/', '.', '-', '_', ':'
+        let start = i + 1;
+        let mut j = start;
+        while j < len
+            && (chars[j].is_alphanumeric() || matches!(chars[j], '/' | '.' | '-' | '_' | ':'))
+        {
+            j += 1;
+        }
+
+        // Nothing after '@' (just @ at end, or @ followed by space)
+        if j == start {
+            output.push('@');
+            i += 1;
+            continue;
+        }
+
+        let mention = &input[byte_offset(&chars, start)..byte_offset(&chars, j)];
+
+        // Parse path and optional line range using existing helper
+        let (raw_path, range) = parse_add_arg(mention);
+
+        // Check if the file exists
+        let path = std::path::Path::new(raw_path);
+        if !path.is_file() {
+            // Not a file — leave the mention unchanged
+            output.push('@');
+            output.push_str(mention);
+            i = j;
+            continue;
+        }
+
+        // It's a real file — read it
+        if is_image_extension(raw_path) {
+            if range.is_some() {
+                // Line ranges don't apply to images — leave unchanged
+                output.push('@');
+                output.push_str(mention);
+                i = j;
+                continue;
+            }
+            match read_image_for_add(raw_path) {
+                Ok((data, mime_type)) => {
+                    let size = std::fs::metadata(raw_path).map(|m| m.len()).unwrap_or(0);
+                    let size_str = if size >= 1_048_576 {
+                        format!("{:.1} MB", size as f64 / 1_048_576.0)
+                    } else {
+                        format!("{:.0} KB", size as f64 / 1024.0)
+                    };
+                    let summary = format!(
+                        "{GREEN}  ✓ added image {raw_path} ({size_str}, {mime_type}){RESET}"
+                    );
+                    results.push(AddResult::Image {
+                        summary,
+                        data,
+                        mime_type,
+                    });
+                    // Replace @path with just the filename in output
+                    let filename = path
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string())
+                        .unwrap_or_else(|| raw_path.to_string());
+                    output.push_str(&filename);
+                }
+                Err(_) => {
+                    // Read failed — leave unchanged
+                    output.push('@');
+                    output.push_str(mention);
+                }
+            }
+        } else {
+            match read_file_for_add(raw_path, range) {
+                Ok((content, line_count)) => {
+                    let formatted = format_add_content(raw_path, &content);
+                    let word = crate::format::pluralize(line_count, "line", "lines");
+                    let range_info = if let Some((s, e)) = range {
+                        format!(" (lines {s}-{e})")
+                    } else {
+                        String::new()
+                    };
+                    let summary = format!(
+                        "{GREEN}  ✓ added {raw_path}{range_info} ({line_count} {word}){RESET}"
+                    );
+                    results.push(AddResult::Text {
+                        summary,
+                        content: formatted,
+                    });
+                    // Replace @path with just the filename in output
+                    let filename = path
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string())
+                        .unwrap_or_else(|| raw_path.to_string());
+                    if let Some((s, e)) = range {
+                        output.push_str(&format!("{filename}:{s}-{e}"));
+                    } else {
+                        output.push_str(&filename);
+                    }
+                }
+                Err(_) => {
+                    // Read failed — leave unchanged
+                    output.push('@');
+                    output.push_str(mention);
+                }
+            }
+        }
+
+        i = j;
+    }
+
+    (output, results)
+}
+
+/// Helper: get the byte offset corresponding to a char index.
+fn byte_offset(chars: &[char], char_idx: usize) -> usize {
+    chars[..char_idx].iter().map(|c| c.len_utf8()).sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3113,5 +3263,89 @@ mod tests {
 
         let (_, mime_type) = read_image_for_add(webp_path.to_str().unwrap()).unwrap();
         assert_eq!(mime_type, "image/webp");
+    }
+
+    // ── expand_file_mentions tests ───────────────────────────────────
+
+    #[test]
+    fn expand_file_mentions_no_mentions() {
+        let (text, results) = expand_file_mentions("hello world, no mentions here");
+        assert_eq!(text, "hello world, no mentions here");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn expand_file_mentions_resolves_real_file() {
+        // Cargo.toml should exist at the project root
+        let (text, results) = expand_file_mentions("explain @Cargo.toml");
+        assert_eq!(results.len(), 1);
+        assert!(
+            matches!(&results[0], AddResult::Text { summary, .. } if summary.contains("Cargo.toml"))
+        );
+        assert_eq!(text, "explain Cargo.toml");
+    }
+
+    #[test]
+    fn expand_file_mentions_nonexistent_file_unchanged() {
+        let (text, results) = expand_file_mentions("look at @nonexistent_xyz_file.rs");
+        assert!(results.is_empty());
+        assert_eq!(text, "look at @nonexistent_xyz_file.rs");
+    }
+
+    #[test]
+    fn expand_file_mentions_with_line_range() {
+        let (text, results) = expand_file_mentions("review @Cargo.toml:1-3");
+        assert_eq!(results.len(), 1);
+        assert!(
+            matches!(&results[0], AddResult::Text { summary, .. } if summary.contains("lines 1-3"))
+        );
+        assert_eq!(text, "review Cargo.toml:1-3");
+    }
+
+    #[test]
+    fn expand_file_mentions_multiple_mentions() {
+        let (text, results) = expand_file_mentions("compare @Cargo.toml and @LICENSE");
+        assert_eq!(results.len(), 2);
+        assert_eq!(text, "compare Cargo.toml and LICENSE");
+    }
+
+    #[test]
+    fn expand_file_mentions_at_end_of_string_no_path() {
+        let (text, results) = expand_file_mentions("trailing @");
+        assert!(results.is_empty());
+        assert_eq!(text, "trailing @");
+    }
+
+    #[test]
+    fn expand_file_mentions_at_followed_by_space() {
+        let (text, results) = expand_file_mentions("hello @ world");
+        assert!(results.is_empty());
+        assert_eq!(text, "hello @ world");
+    }
+
+    #[test]
+    fn expand_file_mentions_skips_email_like() {
+        let (text, results) = expand_file_mentions("email user@example.com please");
+        assert!(results.is_empty());
+        assert_eq!(text, "email user@example.com please");
+    }
+
+    #[test]
+    fn expand_file_mentions_path_with_dirs() {
+        // src/main.rs should exist
+        let (text, results) = expand_file_mentions("look at @src/main.rs");
+        assert_eq!(results.len(), 1);
+        assert!(
+            matches!(&results[0], AddResult::Text { summary, .. } if summary.contains("src/main.rs"))
+        );
+        assert_eq!(text, "look at main.rs");
+    }
+
+    #[test]
+    fn expand_file_mentions_mixed_real_and_fake() {
+        let (text, results) = expand_file_mentions("@Cargo.toml is real but @fake_abc.rs is not");
+        assert_eq!(results.len(), 1);
+        assert!(text.contains("Cargo.toml"));
+        assert!(text.contains("@fake_abc.rs"));
     }
 }

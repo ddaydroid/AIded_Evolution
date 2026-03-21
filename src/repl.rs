@@ -648,14 +648,49 @@ pub async fn run_repl(
         }
 
         last_input = Some(input.to_string());
-        let outcome = run_prompt_auto_retry(
-            agent,
-            input,
-            &mut session_total,
-            &agent_config.model,
-            &session_changes,
-        )
-        .await;
+
+        // Expand @file mentions (e.g. "explain @src/main.rs") into file content
+        let (cleaned_text, file_results) = commands::expand_file_mentions(input);
+
+        let outcome = if !file_results.is_empty() {
+            // Print summaries like /add does
+            for result in &file_results {
+                match result {
+                    commands::AddResult::Text { summary, .. } => println!("{summary}"),
+                    commands::AddResult::Image { summary, .. } => println!("{summary}"),
+                }
+            }
+            let word = crate::format::pluralize(file_results.len(), "file", "files");
+            println!(
+                "{}  ({} {word} inlined from @mentions){}\n",
+                DIM,
+                file_results.len(),
+                RESET
+            );
+
+            // Build content blocks: user text first, then file contents
+            let mut content_blocks = vec![yoagent::types::Content::Text {
+                text: cleaned_text.clone(),
+            }];
+            content_blocks.extend(build_add_content_blocks(&file_results));
+
+            run_prompt_with_content(
+                agent,
+                content_blocks,
+                &mut session_total,
+                &agent_config.model,
+            )
+            .await
+        } else {
+            run_prompt_auto_retry(
+                agent,
+                input,
+                &mut session_total,
+                &agent_config.model,
+                &session_changes,
+            )
+            .await
+        };
         last_error = outcome.last_tool_error;
 
         // Auto-compact when context window is getting full

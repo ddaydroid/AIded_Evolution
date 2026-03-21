@@ -82,3 +82,29 @@ This shows:
 ## Interrupting
 
 Press **Ctrl+C** to cancel the current response. The agent will stop and you can type a new prompt. Press Ctrl+C again to exit.
+
+## Inline @file mentions
+
+You can reference files directly in your prompts using `@path` syntax. The file content is automatically read and injected into the conversation — no need for a separate `/add` command.
+
+```
+> explain @src/main.rs
+  ✓ added src/main.rs (250 lines)
+  (1 file inlined from @mentions)
+
+> refactor @src/cli.rs:50-100
+  ✓ added src/cli.rs (lines 50-100) (51 lines)
+  (1 file inlined from @mentions)
+
+> compare @Cargo.toml and @README.md
+  ✓ added Cargo.toml (35 lines)
+  ✓ added README.md (120 lines)
+  (2 files inlined from @mentions)
+```
+
+**How it works:**
+- `@path` — injects the entire file
+- `@path:start-end` — injects a specific line range
+- If the path doesn't exist, the `@mention` is left as-is (it might be a username)
+- Email-like patterns (`user@example.com`) are not treated as file mentions
+- Images work too: `@screenshot.png` inlines the image into the conversation
