@@ -1287,10 +1287,36 @@ impl MarkdownRenderer {
     pub fn render_delta(&mut self, delta: &str) -> String {
         let mut output = String::new();
 
-        // If we're mid-line and NOT in a code block, we can render tokens immediately
-        // without buffering (code fences and headers only matter at line start).
-        if !self.line_start && !self.in_code_block {
-            // Split on newlines: everything before the first \n is mid-line
+        // Mid-line fast paths: render tokens immediately without buffering.
+        // Code fences and headers only matter at line start, so mid-line is safe.
+        if !self.line_start {
+            if self.in_code_block {
+                // Mid-line inside a code block: emit tokens immediately with
+                // appropriate styling (dim or syntax-highlighted) instead of
+                // buffering until a complete line. This gives token-by-token
+                // streaming for code blocks (issue #147).
+                if let Some(newline_pos) = delta.find('\n') {
+                    let mid_line_part = &delta[..newline_pos];
+                    if !mid_line_part.is_empty() {
+                        output.push_str(&self.render_code_inline(mid_line_part));
+                    }
+                    output.push('\n');
+                    self.line_start = true;
+
+                    // Process the rest (after the first \n) via buffered path
+                    // because we're now at line start and need fence detection.
+                    let rest = &delta[newline_pos + 1..];
+                    if !rest.is_empty() {
+                        output.push_str(&self.render_delta_buffered(rest));
+                    }
+                } else {
+                    // No newline — pure mid-line code content, render immediately
+                    output.push_str(&self.render_code_inline(delta));
+                }
+                return output;
+            }
+
+            // Mid-line outside a code block: render with inline formatting
             if let Some(newline_pos) = delta.find('\n') {
                 // Render the mid-line portion immediately
                 let mid_line_part = &delta[..newline_pos];
@@ -1312,9 +1338,17 @@ impl MarkdownRenderer {
             return output;
         }
 
-        // We're at line start (or in a code block) — use buffered approach
+        // We're at line start — use buffered approach (needed to detect fences, headers)
         output.push_str(&self.render_delta_buffered(delta));
         output
+    }
+
+    /// Render a code block fragment with dim styling for immediate streaming.
+    /// Used for mid-line token-by-token output inside code blocks.
+    /// Full syntax highlighting is applied to complete lines (at newline boundaries);
+    /// fragments get dim styling for responsiveness.
+    fn render_code_inline(&self, text: &str) -> String {
+        format!("{DIM}{text}{RESET}")
     }
 
     /// Buffered rendering: adds delta to line_buffer, processes complete lines,
@@ -1399,6 +1433,23 @@ impl MarkdownRenderer {
                 // Even with fewer chars, if it can't possibly be a special line, flush
                 let buf = std::mem::take(&mut self.line_buffer);
                 output.push_str(&self.render_inline(&buf));
+                self.line_start = false;
+            }
+        }
+
+        // Inside a code block at line start: early-resolve when content can't be a
+        // closing fence. Only ``` matters here (no headers, lists, etc.). Once we
+        // know it's not a fence, flush as code content and set line_start=false so
+        // subsequent tokens stream immediately via the mid-line fast path (issue #147).
+        if self.line_start && !self.line_buffer.is_empty() && self.in_code_block {
+            let trimmed = self.line_buffer.trim_start();
+            let could_be_fence =
+                trimmed.is_empty() || trimmed.starts_with('`') || "`".starts_with(trimmed);
+
+            if !could_be_fence {
+                // Definitely not a closing fence — flush as code content immediately
+                let buf = std::mem::take(&mut self.line_buffer);
+                output.push_str(&self.render_code_inline(&buf));
                 self.line_start = false;
             }
         }
@@ -2731,20 +2782,110 @@ mod tests {
 
     #[test]
     fn test_md_streaming_in_code_block_immediate() {
-        // Inside a code block, tokens should still stream
+        // Inside a code block, tokens should stream immediately once fence is ruled out.
+        // "let x" can't be a closing fence (doesn't start with `), so it should
+        // be early-resolved and emitted without needing flush().
         let mut r = MarkdownRenderer::new();
         let _ = r.render_delta("```rust\n");
         assert!(r.in_code_block);
-        // Now send code tokens — inside code block, line-start buffering still applies
-        // because we need complete lines for syntax highlighting
+        // Send code token — not a fence, should be emitted immediately
         let out = r.render_delta("let x");
-        // In a code block we still want to buffer for syntax highlighting accuracy
-        // but mid-line tokens should still be immediate when possible
-        let flushed = r.flush();
-        let total = format!("{out}{flushed}");
         assert!(
-            total.contains("let") || total.contains("x"),
-            "Code block content should eventually render, got: '{total}'"
+            !out.is_empty(),
+            "Code block content that can't be a fence should emit immediately, got empty"
+        );
+        assert!(
+            out.contains("let"),
+            "Code block content should contain the text, got: '{out}'"
+        );
+    }
+
+    #[test]
+    fn test_md_code_block_mid_line_emitted_immediately() {
+        // Issue #147: Mid-line code block content should be emitted token-by-token,
+        // not buffered until a newline arrives.
+        let mut r = MarkdownRenderer::new();
+        // Open a code block
+        let _ = r.render_delta("```\n");
+        assert!(r.in_code_block);
+
+        // Send a line start token that gets buffered (could be closing fence)
+        // Then a complete line to move past line_start
+        let _ = r.render_delta("let x = 1;\n");
+
+        // Now send a mid-line token — should be emitted immediately, not empty
+        let out = r.render_delta("println");
+        assert!(
+            !out.is_empty(),
+            "Mid-line code block token should be emitted immediately, got empty string"
+        );
+        assert!(
+            out.contains("println"),
+            "Mid-line code block token should contain the text, got: '{out}'"
+        );
+    }
+
+    #[test]
+    fn test_md_code_block_mid_line_with_newline() {
+        // When a newline arrives mid-line in a code block, it should transition to line_start
+        let mut r = MarkdownRenderer::new();
+        let _ = r.render_delta("```\n");
+        let _ = r.render_delta("first line\n");
+
+        // Send mid-line token followed by newline
+        let out = r.render_delta("hello\n");
+        assert!(
+            out.contains("hello"),
+            "Code block content before newline should be rendered, got: '{out}'"
+        );
+        // After the newline, we should be at line_start again
+        assert!(
+            r.line_start,
+            "After newline in code block, should be at line_start"
+        );
+    }
+
+    #[test]
+    fn test_md_code_block_fence_detection_still_works() {
+        // Closing fence detection must still work even with the mid-line fast path
+        let mut r = MarkdownRenderer::new();
+        let _ = r.render_delta("```rust\n");
+        assert!(r.in_code_block);
+
+        let _ = r.render_delta("let x = 42;\n");
+        assert!(r.in_code_block);
+
+        // Closing fence at line start — must be detected (not short-circuited)
+        let _ = r.render_delta("```\n");
+        assert!(
+            !r.in_code_block,
+            "Closing fence should still be detected and end the code block"
+        );
+    }
+
+    #[test]
+    fn test_md_code_block_mid_line_multiple_tokens() {
+        // Multiple mid-line tokens in a code block should each produce output
+        let mut r = MarkdownRenderer::new();
+        let _ = r.render_delta("```\n");
+        let _ = r.render_delta("start\n");
+
+        let out1 = r.render_delta("foo");
+        assert!(
+            !out1.is_empty(),
+            "First mid-line token should emit, got empty"
+        );
+
+        let out2 = r.render_delta("bar");
+        assert!(
+            !out2.is_empty(),
+            "Second mid-line token should emit, got empty"
+        );
+
+        let out3 = r.render_delta(" baz");
+        assert!(
+            !out3.is_empty(),
+            "Third mid-line token should emit, got empty"
         );
     }
 
