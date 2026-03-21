@@ -796,12 +796,8 @@ pub fn handle_lint() -> Option<String> {
 
 /// Build a directory tree from `git ls-files`.
 pub fn build_project_tree(max_depth: usize) -> String {
-    let files = match std::process::Command::new("git")
-        .args(["ls-files"])
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            let text = String::from_utf8_lossy(&output.stdout);
+    let files = match crate::git::run_git(&["ls-files"]) {
+        Ok(text) => {
             let mut files: Vec<String> = text
                 .lines()
                 .filter(|l| !l.is_empty())
@@ -810,7 +806,7 @@ pub fn build_project_tree(max_depth: usize) -> String {
             files.sort();
             files
         }
-        _ => return "(not a git repository — /tree requires git)".to_string(),
+        Err(_) => return "(not a git repository — /tree requires git)".to_string(),
     };
 
     if files.is_empty() {
@@ -999,18 +995,12 @@ pub fn find_files(pattern: &str) -> Vec<FindMatch> {
 
 /// List all project files. Prefers `git ls-files`, falls back to walkdir-style listing.
 fn list_project_files() -> Vec<String> {
-    if let Ok(output) = std::process::Command::new("git")
-        .args(["ls-files"])
-        .output()
-    {
-        if output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout);
-            return text
-                .lines()
-                .filter(|l| !l.is_empty())
-                .map(|l| l.to_string())
-                .collect();
-        }
+    if let Ok(text) = crate::git::run_git(&["ls-files"]) {
+        return text
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_string())
+            .collect();
     }
 
     // Fallback: recursive listing of current directory (respecting common ignores)

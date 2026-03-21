@@ -164,35 +164,16 @@ pub fn format_diff_stat(summary: &DiffStatSummary) -> String {
 
 pub fn handle_diff() {
     // Check if we're in a git repo
-    let status_output = std::process::Command::new("git")
-        .args(["status", "--short"])
-        .output();
-
-    match status_output {
-        Ok(output) if output.status.success() => {
-            let status = String::from_utf8_lossy(&output.stdout);
-            if status.trim().is_empty() {
-                println!("{DIM}  (no uncommitted changes){RESET}\n");
-                return;
-            }
-
+    match run_git(&["status", "--short"]) {
+        Ok(status) if status.is_empty() => {
+            println!("{DIM}  (no uncommitted changes){RESET}\n");
+        }
+        Ok(status) => {
             // Get the stat summary
-            let stat_text = std::process::Command::new("git")
-                .args(["diff", "--stat"])
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_default();
+            let stat_text = run_git(&["diff", "--stat"]).unwrap_or_default();
 
             // Also include staged changes in stat
-            let staged_stat_text = std::process::Command::new("git")
-                .args(["diff", "--cached", "--stat"])
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_default();
+            let staged_stat_text = run_git(&["diff", "--cached", "--stat"]).unwrap_or_default();
 
             // Show file status list
             println!("{DIM}  Changes:");
@@ -236,13 +217,7 @@ pub fn handle_diff() {
             }
 
             // Show the full diff
-            let full_diff = std::process::Command::new("git")
-                .args(["diff"])
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_default();
+            let full_diff = run_git(&["diff"]).unwrap_or_default();
 
             if !full_diff.trim().is_empty() {
                 println!("\n{DIM}  ── Full diff ──{RESET}");
@@ -269,36 +244,23 @@ pub fn handle_diff() {
 // ── /undo ────────────────────────────────────────────────────────────────
 
 pub fn handle_undo() {
-    let diff_output = std::process::Command::new("git")
-        .args(["diff", "--stat"])
-        .output();
-    let untracked = std::process::Command::new("git")
-        .args(["ls-files", "--others", "--exclude-standard"])
-        .output();
+    let diff_stat = run_git(&["diff", "--stat"]).unwrap_or_default();
+    let untracked_text =
+        run_git(&["ls-files", "--others", "--exclude-standard"]).unwrap_or_default();
 
-    let has_diff = diff_output
-        .as_ref()
-        .map(|o| o.status.success() && !String::from_utf8_lossy(&o.stdout).trim().is_empty())
-        .unwrap_or(false);
-    let untracked_files: Vec<String> = untracked
-        .as_ref()
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .map(|l| l.to_string())
-                .collect()
-        })
-        .unwrap_or_default();
+    let has_diff = !diff_stat.is_empty();
+    let untracked_files: Vec<String> = untracked_text
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect();
     let has_untracked = !untracked_files.is_empty();
 
     if !has_diff && !has_untracked {
         println!("{DIM}  (nothing to undo — no uncommitted changes){RESET}\n");
     } else {
         if has_diff {
-            if let Ok(ref output) = diff_output {
-                let diff = String::from_utf8_lossy(&output.stdout);
-                println!("{DIM}{diff}{RESET}");
-            }
+            println!("{DIM}{diff_stat}{RESET}");
         }
         if has_untracked {
             println!("{DIM}  untracked files:");
@@ -309,14 +271,10 @@ pub fn handle_undo() {
         }
 
         if has_diff {
-            let _ = std::process::Command::new("git")
-                .args(["checkout", "--", "."])
-                .output();
+            let _ = run_git(&["checkout", "--", "."]);
         }
         if has_untracked {
-            let _ = std::process::Command::new("git")
-                .args(["clean", "-fd"])
-                .output();
+            let _ = run_git(&["clean", "-fd"]);
         }
         println!("{GREEN}  ✓ reverted all uncommitted changes{RESET}\n");
     }
@@ -684,13 +642,7 @@ pub fn build_review_content(arg: &str) -> Option<(String, String)> {
             }
             Some(diff) if diff.trim().is_empty() => {
                 // Fall back to unstaged diff if nothing staged
-                let unstaged = std::process::Command::new("git")
-                    .args(["diff"])
-                    .output()
-                    .ok()
-                    .filter(|o| o.status.success())
-                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                    .unwrap_or_default();
+                let unstaged = run_git(&["diff"]).unwrap_or_default();
                 if unstaged.trim().is_empty() {
                     println!("{DIM}  nothing to review — no staged or unstaged changes{RESET}\n");
                     None

@@ -561,14 +561,7 @@ pub const MAX_PROJECT_FILES: usize = 200;
 /// Returns a newline-separated list of tracked files, capped at MAX_PROJECT_FILES.
 /// Returns None if git is not available or the directory is not a git repo.
 pub fn get_project_file_listing() -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["ls-files"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = crate::git::run_git(&["ls-files"]).ok()?;
     let files: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
     if files.is_empty() {
         return None;
@@ -589,21 +582,15 @@ pub fn get_project_file_listing() -> Option<String> {
 /// Returns up to `max_files` unique file paths that were modified in recent commits.
 /// Returns None if not in a git repo or git is unavailable.
 pub fn get_recently_changed_files(max_files: usize) -> Option<Vec<String>> {
-    let output = std::process::Command::new("git")
-        .args([
-            "log",
-            "--diff-filter=M",
-            "--name-only",
-            "--pretty=format:",
-            "-n",
-            "20",
-        ])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = crate::git::run_git(&[
+        "log",
+        "--diff-filter=M",
+        "--name-only",
+        "--pretty=format:",
+        "-n",
+        "20",
+    ])
+    .ok()?;
     let mut seen = std::collections::HashSet::new();
     let files: Vec<String> = stdout
         .lines()

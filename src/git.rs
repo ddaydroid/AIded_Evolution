@@ -2,34 +2,29 @@
 
 use crate::format::*;
 
+/// Run a git command with the given args.
+/// Returns `Ok(stdout_trimmed)` on success, `Err(stderr_trimmed)` on failure.
+/// This is the common path for most git invocations — use raw `Command` only
+/// when you need the full `Output` struct (e.g., for separate stdout+stderr handling).
+pub fn run_git(args: &[&str]) -> Result<String, String> {
+    match std::process::Command::new("git").args(args).output() {
+        Ok(output) if output.status.success() => {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        }
+        Ok(output) => Err(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+        Err(e) => Err(format!("git not found: {e}")),
+    }
+}
+
 /// Get the current git branch name, if we're in a git repo.
 pub fn git_branch() -> Option<String> {
-    std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                String::from_utf8(o.stdout)
-                    .ok()
-                    .map(|s| s.trim().to_string())
-            } else {
-                None
-            }
-        })
+    run_git(&["rev-parse", "--abbrev-ref", "HEAD"]).ok()
 }
 
 /// Get staged changes (git diff --cached).
 /// Returns None if git fails, Some("") if nothing staged, or Some(diff) with the diff text.
 pub fn get_staged_diff() -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["diff", "--cached"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).to_string())
+    run_git(&["diff", "--cached"]).ok()
 }
 
 /// Run `git commit -m "<message>"` and return (success, output_text).
@@ -188,140 +183,110 @@ pub fn parse_git_args(arg: &str) -> GitSubcommand {
 /// Execute a `/git` subcommand directly (no AI, no tokens).
 pub fn run_git_subcommand(subcmd: &GitSubcommand) {
     match subcmd {
-        GitSubcommand::Status => {
-            match std::process::Command::new("git")
-                .args(["status", "--short"])
-                .output()
-            {
-                Ok(output) if output.status.success() => {
-                    let text = String::from_utf8_lossy(&output.stdout);
-                    if text.trim().is_empty() {
-                        println!("{DIM}  (clean working tree){RESET}\n");
-                    } else {
-                        println!("{DIM}{text}{RESET}");
-                    }
-                }
-                _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
+        GitSubcommand::Status => match run_git(&["status", "--short"]) {
+            Ok(text) if text.is_empty() => {
+                println!("{DIM}  (clean working tree){RESET}\n");
             }
-        }
+            Ok(text) => {
+                println!("{DIM}{text}{RESET}");
+            }
+            Err(_) => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
+        },
         GitSubcommand::Log(n) => {
             let n_str = n.to_string();
-            match std::process::Command::new("git")
-                .args(["log", "--oneline", "-n", &n_str])
-                .output()
-            {
-                Ok(output) if output.status.success() => {
-                    let text = String::from_utf8_lossy(&output.stdout);
-                    if text.trim().is_empty() {
-                        println!("{DIM}  (no commits yet){RESET}\n");
-                    } else {
-                        println!("{DIM}{text}{RESET}");
-                    }
+            match run_git(&["log", "--oneline", "-n", &n_str]) {
+                Ok(text) if text.is_empty() => {
+                    println!("{DIM}  (no commits yet){RESET}\n");
                 }
-                _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
+                Ok(text) => {
+                    println!("{DIM}{text}{RESET}");
+                }
+                Err(_) => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
             }
         }
-        GitSubcommand::Add(path) => {
-            match std::process::Command::new("git")
-                .args(["add", path])
-                .output()
-            {
-                Ok(output) if output.status.success() => {
-                    println!("{GREEN}  ✓ staged: {path}{RESET}\n");
+        GitSubcommand::Add(path) => match run_git(&["add", path]) {
+            Ok(_) => {
+                println!("{GREEN}  ✓ staged: {path}{RESET}\n");
+            }
+            Err(e) => {
+                if e.contains("git not found") {
+                    eprintln!("{RED}  error: git not found{RESET}\n");
+                } else {
+                    eprintln!("{RED}  error: {e}{RESET}\n");
                 }
-                Ok(output) => {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
-                }
-                Err(_) => eprintln!("{RED}  error: git not found{RESET}\n"),
             }
-        }
-        GitSubcommand::Stash => match std::process::Command::new("git").args(["stash"]).output() {
-            Ok(output) if output.status.success() => {
-                let text = String::from_utf8_lossy(&output.stdout);
-                println!("{GREEN}  ✓ {}{RESET}\n", text.trim());
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
-            }
-            Err(_) => eprintln!("{RED}  error: git not found{RESET}\n"),
         },
-        GitSubcommand::StashPop => {
-            match std::process::Command::new("git")
-                .args(["stash", "pop"])
-                .output()
-            {
-                Ok(output) if output.status.success() => {
-                    let text = String::from_utf8_lossy(&output.stdout);
-                    println!("{GREEN}  ✓ {}{RESET}\n", text.trim());
-                }
-                Ok(output) => {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
-                }
-                Err(_) => eprintln!("{RED}  error: git not found{RESET}\n"),
+        GitSubcommand::Stash => match run_git(&["stash"]) {
+            Ok(text) => {
+                println!("{GREEN}  ✓ {text}{RESET}\n");
             }
-        }
+            Err(e) => {
+                if e.contains("git not found") {
+                    eprintln!("{RED}  error: git not found{RESET}\n");
+                } else {
+                    eprintln!("{RED}  error: {e}{RESET}\n");
+                }
+            }
+        },
+        GitSubcommand::StashPop => match run_git(&["stash", "pop"]) {
+            Ok(text) => {
+                println!("{GREEN}  ✓ {text}{RESET}\n");
+            }
+            Err(e) => {
+                if e.contains("git not found") {
+                    eprintln!("{RED}  error: git not found{RESET}\n");
+                } else {
+                    eprintln!("{RED}  error: {e}{RESET}\n");
+                }
+            }
+        },
         GitSubcommand::Diff { cached } => {
             let args: Vec<&str> = if *cached {
                 vec!["diff", "--cached"]
             } else {
                 vec!["diff"]
             };
-            match std::process::Command::new("git").args(&args).output() {
-                Ok(output) if output.status.success() => {
-                    let text = String::from_utf8_lossy(&output.stdout);
-                    if text.trim().is_empty() {
-                        let scope = if *cached { "staged" } else { "unstaged" };
-                        println!("{DIM}  (no {scope} changes){RESET}\n");
-                    } else {
-                        println!("{text}");
-                    }
+            match run_git(&args) {
+                Ok(text) if text.is_empty() => {
+                    let scope = if *cached { "staged" } else { "unstaged" };
+                    println!("{DIM}  (no {scope} changes){RESET}\n");
                 }
-                _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
+                Ok(text) => {
+                    println!("{text}");
+                }
+                Err(_) => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
             }
         }
         GitSubcommand::Branch(name) => match name {
-            Some(branch_name) => {
-                match std::process::Command::new("git")
-                    .args(["checkout", "-b", branch_name])
-                    .output()
-                {
-                    Ok(output) if output.status.success() => {
-                        println!("{GREEN}  ✓ switched to new branch '{branch_name}'{RESET}\n");
-                    }
-                    Ok(output) => {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
-                    }
-                    Err(_) => eprintln!("{RED}  error: git not found{RESET}\n"),
+            Some(branch_name) => match run_git(&["checkout", "-b", branch_name]) {
+                Ok(_) => {
+                    println!("{GREEN}  ✓ switched to new branch '{branch_name}'{RESET}\n");
                 }
-            }
-            None => {
-                match std::process::Command::new("git")
-                    .args(["branch", "--list", "-a"])
-                    .output()
-                {
-                    Ok(output) if output.status.success() => {
-                        let text = String::from_utf8_lossy(&output.stdout);
-                        if text.trim().is_empty() {
-                            println!("{DIM}  (no branches yet){RESET}\n");
+                Err(e) => {
+                    if e.contains("git not found") {
+                        eprintln!("{RED}  error: git not found{RESET}\n");
+                    } else {
+                        eprintln!("{RED}  error: {e}{RESET}\n");
+                    }
+                }
+            },
+            None => match run_git(&["branch", "--list", "-a"]) {
+                Ok(text) if text.is_empty() => {
+                    println!("{DIM}  (no branches yet){RESET}\n");
+                }
+                Ok(text) => {
+                    // Current branch line starts with "* ", highlight it
+                    for line in text.lines() {
+                        if line.starts_with("* ") {
+                            println!("{GREEN}{line}{RESET}");
                         } else {
-                            // Current branch line starts with "* ", highlight it
-                            for line in text.lines() {
-                                if line.starts_with("* ") {
-                                    println!("{GREEN}{line}{RESET}");
-                                } else {
-                                    println!("{DIM}{line}{RESET}");
-                                }
-                            }
-                            println!();
+                            println!("{DIM}{line}{RESET}");
                         }
                     }
-                    _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
+                    println!();
                 }
-            }
+                Err(_) => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
+            },
         },
         GitSubcommand::Help => {
             println!("{DIM}  usage: /git status             Show working tree status");
@@ -338,64 +303,27 @@ pub fn run_git_subcommand(subcmd: &GitSubcommand) {
 /// Detect the base branch for PR creation (main or master).
 /// Returns "main" if it exists, otherwise "master", falling back to "main".
 pub fn detect_base_branch() -> String {
-    // Check if "main" branch exists
-    if let Ok(output) = std::process::Command::new("git")
-        .args(["rev-parse", "--verify", "main"])
-        .output()
-    {
-        if output.status.success() {
-            return "main".to_string();
-        }
+    if run_git(&["rev-parse", "--verify", "main"]).is_ok() {
+        return "main".to_string();
     }
-    // Check if "master" branch exists
-    if let Ok(output) = std::process::Command::new("git")
-        .args(["rev-parse", "--verify", "master"])
-        .output()
-    {
-        if output.status.success() {
-            return "master".to_string();
-        }
+    if run_git(&["rev-parse", "--verify", "master"]).is_ok() {
+        return "master".to_string();
     }
-    // Default to "main"
     "main".to_string()
 }
 
 /// Get the diff between the current branch and a base branch.
 /// Returns None if git fails, Some(diff) with the diff text otherwise.
 pub fn get_branch_diff(base: &str) -> Option<String> {
-    let merge_base = std::process::Command::new("git")
-        .args(["merge-base", base, "HEAD"])
-        .output()
-        .ok()?;
-    if !merge_base.status.success() {
-        return None;
-    }
-    let merge_base_sha = String::from_utf8_lossy(&merge_base.stdout)
-        .trim()
-        .to_string();
-
-    let output = std::process::Command::new("git")
-        .args(["diff", &merge_base_sha, "HEAD"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).to_string())
+    let merge_base_sha = run_git(&["merge-base", base, "HEAD"]).ok()?;
+    run_git(&["diff", &merge_base_sha, "HEAD"]).ok()
 }
 
 /// Get the list of commits on the current branch since diverging from the base branch.
 /// Returns None if git fails, Some(commits) with one-line commit summaries otherwise.
 pub fn get_branch_commits(base: &str) -> Option<String> {
     let range = format!("{base}..HEAD");
-    let output = std::process::Command::new("git")
-        .args(["log", "--oneline", &range])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).to_string())
+    run_git(&["log", "--oneline", &range]).ok()
 }
 
 /// Build a prompt for the AI to generate a PR title and description.
@@ -469,6 +397,36 @@ pub fn parse_pr_description(response: &str) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_run_git_valid_args() {
+        // `git --version` should always succeed
+        let result = run_git(&["--version"]);
+        assert!(result.is_ok(), "git --version should succeed");
+        let stdout = result.unwrap();
+        assert!(
+            stdout.contains("git version"),
+            "Output should contain 'git version', got: {stdout}"
+        );
+    }
+
+    #[test]
+    fn test_run_git_invalid_args_returns_err() {
+        // `git --no-such-flag-exists` should fail
+        let result = run_git(&["--no-such-flag-exists"]);
+        assert!(
+            result.is_err(),
+            "Invalid git flag should return Err, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_run_git_trims_output() {
+        // git --version output shouldn't have trailing newlines
+        let result = run_git(&["--version"]).unwrap();
+        assert_eq!(result, result.trim(), "Output should be trimmed");
+    }
 
     #[test]
     fn test_get_staged_diff_runs() {
