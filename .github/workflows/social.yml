@@ -19,7 +19,7 @@ jobs:
         id: bot-token
         uses: actions/create-github-app-token@v1
         with:
-          app-id: ${{ secrets.APP_ID }}
+          app-id: 3157358
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Checkout
